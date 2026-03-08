@@ -7,7 +7,7 @@ import torch
 import numpy as np
 import time as time_module
 from traj_gen_utils import MINCO_S3NU
-from utils import tau_to_time, time_to_tau
+from cost_comparison_utils import tau_to_time, time_to_tau
 
 
 class STOPlanner:

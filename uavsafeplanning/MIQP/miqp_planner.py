@@ -13,7 +13,7 @@ Key features:
 
 import numpy as np
 import time as time_module
-from MIQP_MINCO_solver_min_jerk import MIQPTrajectoryPlanner
+from MIQP_MINCO_solver import MIQPTrajectoryPlanner
 
 
 class MIQPMincoPlanner:

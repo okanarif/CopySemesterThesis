@@ -23,6 +23,7 @@ class STOPlanner:
     Key Features:
     - Minimizes jerk energy (primary objective)
     - Soft penalties for velocity, acceleration, corridor violations
+    - Selectable corridor cost type: L1, L2, or Log(1+v)
     - Fast convergence with L-BFGS optimizer
     - Optional adaptive weight escalation (sequential penalty method)
     """
@@ -41,6 +42,7 @@ class STOPlanner:
         lambda_vel: float = 100.0,
         lambda_acc: float = 5.0,
         lambda_corridor: float = 1000.0,
+        corridor_cost_type: str = 'l2',
         learn_rate: float = 0.05,
         max_iter: int = 50,
         verbose: bool = True,
@@ -77,6 +79,9 @@ class STOPlanner:
             Weight for acceleration violation penalty (target value for final phase)
         lambda_corridor : float
             Weight for corridor violation penalty (target value for final phase)
+        corridor_cost_type : str
+            Corridor penalty formulation: 'l2' (quadratic), 'l1' (linear),
+            or 'log' (log(1 + violation), slower growth than L1 for large violations)
         learn_rate : float
             Learning rate for L-BFGS optimizer
         max_iter : int
@@ -128,6 +133,11 @@ class STOPlanner:
             self.lambda_acc      = lambda_acc
             self.lambda_corridor = lambda_corridor
         
+        corridor_cost_type = corridor_cost_type.lower()
+        if corridor_cost_type not in ('l1', 'l2', 'log'):
+            raise ValueError(f"corridor_cost_type must be 'l1', 'l2', or 'log', got '{corridor_cost_type}'")
+        self.corridor_cost_type = corridor_cost_type
+        
         # Convert corridor constraints to tensors
         self.A_tensors = [torch.tensor(A, dtype=torch.float32) for A in A_list]
         self.b_tensors = [torch.tensor(b, dtype=torch.float32) for b in b_list]
@@ -159,8 +169,7 @@ class STOPlanner:
             "acc": [],
             "corridor": []
         }
-        # Weight history: records (iteration_index, lambda_vel, lambda_acc, lambda_corridor)
-        # at the start of every phase (including phase 0)
+        # Weight history: records phase snapshot at every phase boundary
         self.weight_history = []
         self.solved = False
         self.runtime = 0.0
@@ -199,6 +208,7 @@ class STOPlanner:
             print(f"Segments:       {self.n_segments}")
             print(f"Waypoints:      {self.n_waypoints}")
             print(f"Max iterations: {self.max_iter}")
+            print(f"Corridor cost:  {self.corridor_cost_type.upper()} penalty")
             if self.adaptive_weights:
                 print(f"Adaptive weights: ON  "
                       f"({self.weight_phases} phases, ×{self.weight_scale_factor:.1f} per phase)")
@@ -210,7 +220,8 @@ class STOPlanner:
             print(f"\nConstraint weights (phase 1 / final target):")
             print(f"  λ_vel      = {self.lambda_vel:.2f}  →  {self._lambda_vel_final:.2f}")
             print(f"  λ_acc      = {self.lambda_acc:.2f}  →  {self._lambda_acc_final:.2f}")
-            print(f"  λ_corridor = {self.lambda_corridor:.2f}  →  {self._lambda_corridor_final:.2f}")
+            print(f"  λ_corridor = {self.lambda_corridor:.2f}  →  {self._lambda_corridor_final:.2f}"
+                  f"  [{self.corridor_cost_type.upper()}]")
         
         # Store boundary conditions (fixed, not optimized)
         self.headPVA_pos = torch.tensor([[pos_init]], dtype=torch.float32)
@@ -285,7 +296,12 @@ class STOPlanner:
                 violation = A_seg @ pos_sample - b_seg
                 violation_positive = torch.clamp(violation, min=0.0)
                 
-                cost_corridor = cost_corridor + (violation_positive ** 2).sum()
+                if self.corridor_cost_type == 'l1':
+                    cost_corridor = cost_corridor + violation_positive.sum()
+                elif self.corridor_cost_type == 'l2':
+                    cost_corridor = cost_corridor + (violation_positive ** 2).sum()
+                else:  # 'log': log(1 + violation) — smooth, slower growth than L1
+                    cost_corridor = cost_corridor + torch.log1p(violation_positive).sum()
             
             cost_corridor = cost_corridor / actual_samples
             
@@ -352,10 +368,10 @@ class STOPlanner:
             
             # Record weight snapshot at start of this phase
             self.weight_history.append({
-                "phase":          phase + 1,
-                "iter_start":     global_iter,
-                "lambda_vel":     self.lambda_vel,
-                "lambda_acc":     self.lambda_acc,
+                "phase":           phase + 1,
+                "iter_start":      global_iter,
+                "lambda_vel":      self.lambda_vel,
+                "lambda_acc":      self.lambda_acc,
                 "lambda_corridor": self.lambda_corridor,
             })
             

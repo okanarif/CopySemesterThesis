@@ -437,6 +437,374 @@ def visualize_comparison(
 
 
 # ============================================================================
+# MULTI-METHOD COMPARISON FUNCTIONS
+# ============================================================================
+
+def plot_cost_convergence(
+    results_all: dict,
+    colors: dict,
+    labels: dict,
+    methods: list,
+):
+    """
+    Figure 1 — Cost convergence (2×3 grid).
+    Plots total / jerk / corridor / vel / acc / time costs over iterations
+    for all methods on the same axes. Phase-boundary lines are drawn as
+    dashed vertical lines in the corresponding method colour.
+
+    Parameters
+    ----------
+    results_all : dict
+        Mapping method-key → result dict (must contain 'cost_history' and
+        optionally 'weight_history').
+    colors : dict
+        Mapping method-key → matplotlib colour string.
+    labels : dict
+        Mapping method-key → display label string.
+    methods : list
+        Ordered list of method keys to plot.
+    """
+    cost_panels = [
+        ('total',    'Total Cost'),
+        ('jerk',     'Jerk Energy'),
+        ('corridor', 'Corridor Penalty'),
+        ('vel',      'Velocity Penalty'),
+        ('acc',      'Acceleration Penalty'),
+        ('time',     'Time Cost'),
+    ]
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle("Cost Convergence — Corridor Penalty Comparison",
+                 fontsize=15, fontweight='bold')
+
+    for ax, (key, title) in zip(axes.flat, cost_panels):
+        for m in methods:
+            hist = results_all[m]['cost_history'][key]
+            ax.plot(range(1, len(hist) + 1), hist,
+                    color=colors[m], label=labels[m], linewidth=2)
+            for wh in results_all[m].get('weight_history', [])[1:]:
+                ax.axvline(x=wh['iter_start'] + 1, color=colors[m],
+                           linestyle='--', linewidth=1.0, alpha=0.45)
+        ax.set_title(title)
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel('Cost')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_trajectory_dynamics(
+    results_all: dict,
+    colors: dict,
+    labels: dict,
+    methods: list,
+    v_max: float,
+    a_max: float,
+):
+    """
+    Figure 2 — Velocity / Acceleration / Jerk profiles (1×3).
+    All methods are overlaid on the same axes. Velocity and acceleration
+    limit lines are drawn; jerk is shown as unconstrained.
+
+    Parameters
+    ----------
+    results_all : dict
+        Mapping method-key → result dict (must contain 't_eval',
+        'vel_norm', 'acc_norm', 'jerk_norm').
+    colors, labels, methods : see plot_cost_convergence
+    v_max : float
+        Velocity limit [m/s].
+    a_max : float
+        Acceleration limit [m/s²].
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig.suptitle("Trajectory Dynamics — Corridor Penalty Comparison",
+                 fontsize=15, fontweight='bold')
+
+    for m in methods:
+        r = results_all[m]
+        t = r['t_eval']
+        axes[0].plot(t, r['vel_norm'],  color=colors[m], label=labels[m], linewidth=2)
+        axes[1].plot(t, r['acc_norm'],  color=colors[m], label=labels[m], linewidth=2)
+        axes[2].plot(t, r['jerk_norm'], color=colors[m], label=labels[m], linewidth=2)
+
+    # Use first method's time axis for reference fills
+    t_ref = results_all[methods[0]]['t_eval']
+
+    axes[0].axhline(v_max, color='red', linestyle='--', linewidth=2,
+                    label=f'v_max = {v_max} m/s')
+    axes[0].fill_between(t_ref, 0, v_max, alpha=0.08, color='green')
+    axes[0].set_title('Velocity Profile')
+    axes[0].set_xlabel('Time (s)'); axes[0].set_ylabel('m/s')
+    axes[0].grid(True, alpha=0.3); axes[0].legend(fontsize=8)
+
+    axes[1].axhline(a_max, color='red', linestyle='--', linewidth=2,
+                    label=f'a_max = {a_max} m/s²')
+    axes[1].fill_between(t_ref, 0, a_max, alpha=0.08, color='green')
+    axes[1].set_title('Acceleration Profile')
+    axes[1].set_xlabel('Time (s)'); axes[1].set_ylabel('m/s²')
+    axes[1].grid(True, alpha=0.3); axes[1].legend(fontsize=8)
+
+    axes[2].set_title('Jerk Profile (unconstrained)')
+    axes[2].set_xlabel('Time (s)'); axes[2].set_ylabel('m/s³')
+    axes[2].grid(True, alpha=0.3); axes[2].legend(fontsize=8)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_3d_comparison(
+    results_all: dict,
+    colors: dict,
+    labels: dict,
+    methods: list,
+    A_list: list,
+    b_list: list,
+    pos_init: np.ndarray,
+    pos_final: np.ndarray,
+):
+    """
+    Figure 3 — Side-by-side 3D trajectories (1 row × N methods).
+    Each subplot shows the speed-coloured trajectory inside the corridors.
+    Constraint violations are shown in the subplot title.
+
+    Parameters
+    ----------
+    results_all : dict
+        Mapping method-key → result dict (must contain 'pos', 'vel',
+        'waypoints', 'violations').
+    colors, labels, methods : see plot_cost_convergence
+    A_list, b_list : list
+        Corridor half-space representations.
+    pos_init, pos_final : np.ndarray
+        Start and goal positions (3,).
+    """
+    fig = plt.figure(figsize=(18, 6))
+    fig.suptitle("3D Trajectory Comparison — Corridor Penalty Comparison",
+                 fontsize=15, fontweight='bold')
+
+    for idx, m in enumerate(methods):
+        ax = fig.add_subplot(1, len(methods), idx + 1, projection='3d')
+        pdc.visualize_environment(A_list, b_list, ax=ax)
+
+        pos   = results_all[m]['pos']
+        vel   = results_all[m]['vel']
+        speed = np.linalg.norm(vel, axis=1)
+        norm_c = plt.Normalize(speed.min(), speed.max())
+        pts  = pos.reshape(-1, 1, 3)
+        segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+        lc   = Line3DCollection(segs, cmap='plasma', norm=norm_c)
+        lc.set_array(speed[:-1]); lc.set_linewidth(3)
+        ax.add_collection3d(lc)
+
+        wps = results_all[m]['waypoints']
+        ax.scatter(wps[:, 0], wps[:, 1], wps[:, 2],
+                   c='cyan', marker='o', s=40,
+                   edgecolors='black', linewidths=0.5, label='Waypoints')
+        ax.scatter(*pos_init,  c='lime', s=120, marker='o',
+                   edgecolors='black', linewidths=1.5, zorder=5, label='Start')
+        ax.scatter(*pos_final, c='red',  s=150, marker='*',
+                   edgecolors='black', linewidths=1,   zorder=5, label='Goal')
+
+        viol  = results_all[m]['violations']
+        title = (f"{labels[m]}\n"
+                 f"Corr: {viol['corridor']:.4f} m | "
+                 f"Vel: {viol['vel']:.4f} m/s | "
+                 f"Acc: {viol['acc']:.4f} m/s²")
+        ax.set_title(title, fontsize=9)
+        ax.view_init(elev=60, azim=-20)
+        if idx == 0:
+            ax.legend(fontsize=8, loc='upper left')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_orthogonal_views(
+    results_all: dict,
+    colors: dict,
+    labels: dict,
+    methods: list,
+    A_list: list,
+    b_list: list,
+    pos_init: np.ndarray,
+    pos_final: np.ndarray,
+):
+    """
+    Figure 4 — Orthogonal views grid (rows = methods, cols = XY / XZ / YZ).
+
+    Parameters
+    ----------
+    results_all : dict
+        Mapping method-key → result dict (must contain 'pos', 'vel',
+        'waypoints').
+    colors, labels, methods : see plot_cost_convergence
+    A_list, b_list : list
+        Corridor half-space representations.
+    pos_init, pos_final : np.ndarray
+        Start and goal positions (3,).
+    """
+    ORTHO_VIEWS = [
+        (90, -90, "XY View (Top-down)"),
+        ( 0,  90, "XZ View (Side, +Y)"),
+        ( 0,   0, "YZ View (Side, +X)"),
+    ]
+
+    fig, axes_grid = plt.subplots(
+        len(methods), len(ORTHO_VIEWS),
+        figsize=(18, 6 * len(methods)),
+        subplot_kw={'projection': '3d'},
+    )
+    fig.suptitle("Orthogonal Views — Corridor Penalty Comparison",
+                 fontsize=15, fontweight='bold')
+
+    for row, m in enumerate(methods):
+        pos   = results_all[m]['pos']
+        vel   = results_all[m]['vel']
+        wps   = results_all[m]['waypoints']
+        speed = np.linalg.norm(vel, axis=1)
+        norm_c = plt.Normalize(speed.min(), speed.max())
+        pts   = pos.reshape(-1, 1, 3)
+        segs  = np.concatenate([pts[:-1], pts[1:]], axis=1)
+
+        for col, (elev, azim, view_title) in enumerate(ORTHO_VIEWS):
+            ax = axes_grid[row, col]
+            pdc.visualize_environment(A_list, b_list, ax=ax)
+
+            lc = Line3DCollection(segs, cmap='plasma', norm=norm_c)
+            lc.set_array(speed[:-1]); lc.set_linewidth(2.5)
+            ax.add_collection3d(lc)
+
+            ax.scatter(wps[:, 0], wps[:, 1], wps[:, 2],
+                       c='cyan', marker='o', s=30,
+                       edgecolors='black', linewidths=0.4)
+            ax.scatter(*pos_init,  c='lime', s=100, marker='o',
+                       edgecolors='black', linewidths=1.2, zorder=5)
+            ax.scatter(*pos_final, c='red',  s=120, marker='*',
+                       edgecolors='black', linewidths=0.8, zorder=5)
+
+            ax.view_init(elev=elev, azim=azim)
+            if col == 0:
+                ax.set_ylabel(labels[m], fontsize=10,
+                              labelpad=12, fontweight='bold')
+            if row == 0:
+                ax.set_title(view_title, fontsize=11)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def print_summary_table(
+    results_all: dict,
+    labels: dict,
+    methods: list,
+):
+    """
+    Print a formatted summary table of runtimes, jerk costs,
+    trajectory times, and constraint violations.
+
+    Parameters
+    ----------
+    results_all : dict
+        Mapping method-key → result dict.
+    labels : dict
+        Mapping method-key → display label string.
+    methods : list
+        Ordered list of method keys.
+    """
+    print("\n" + "=" * 95)
+    print("  CORRIDOR COST FUNCTION COMPARISON SUMMARY")
+    print("=" * 95)
+    print(f"{'Method':<20} | {'Runtime (s)':>11} | {'Jerk Cost':>11} | {'Total T (s)':>11} | "
+          f"{'Vel Viol (m/s)':>14} | {'Acc Viol (m/s²)':>15} | {'Corr Viol (m)':>13}")
+    print("-" * 95)
+    for m in methods:
+        r = results_all[m]
+        v = r['violations']
+        vel_flag  = " ✗" if v['vel']      > 1e-4 else " ✓"
+        acc_flag  = " ✗" if v['acc']      > 1e-4 else " ✓"
+        corr_flag = " ✗" if v['corridor'] > 1e-4 else " ✓"
+        print(f"{labels[m]:<20} | {r['runtime']:>11.3f} | {r['jerk_cost']:>11.6f} | "
+              f"{r['total_time']:>11.3f} | "
+              f"{v['vel']:>12.6f}{vel_flag} | "
+              f"{v['acc']:>13.6f}{acc_flag} | "
+              f"{v['corridor']:>11.6f}{corr_flag}")
+    print("=" * 95)
+    print("\nLegend:  ✓ = no significant violation (<1e-4)  |  ✗ = violation detected")
+    print("Corridor violation = max(Ax − b) sampled at 200 points along the trajectory.")
+    print("Vel / Acc violation = max(norm − limit) across 200 sample points.")
+
+
+def visualize_cost_comparison(
+    results_all: dict,
+    colors: dict,
+    labels: dict,
+    methods: list,
+    A_list: list,
+    b_list: list,
+    pos_init: np.ndarray,
+    pos_final: np.ndarray,
+    v_max: float,
+    a_max: float,
+):
+    """
+    Master comparison function — runs all four figures and prints the
+    summary table.
+
+    Figures produced (in order):
+    1. Cost convergence  (2×3 grid, all cost terms over iterations)
+    2. Trajectory dynamics (1×3: vel / acc / jerk profiles)
+    3. 3D trajectory comparison (1 row × N methods)
+    4. Orthogonal views (rows = methods, cols = XY / XZ / YZ)
+    5. Summary table printed to stdout
+
+    Parameters
+    ----------
+    results_all : dict
+        Mapping method-key → result dict from STOPlanner.get_results().
+    colors : dict
+        Mapping method-key → matplotlib colour string, e.g. {'L2': 'C0'}.
+    labels : dict
+        Mapping method-key → display label, e.g. {'L2': 'L2 (quadratic)'}.
+    methods : list
+        Ordered list of method keys, e.g. ['L2', 'L1', 'Log'].
+    A_list, b_list : list
+        Corridor half-space representations.
+    pos_init, pos_final : np.ndarray
+        Start and goal positions (3,).
+    v_max : float
+        Velocity limit [m/s].
+    a_max : float
+        Acceleration limit [m/s²].
+    """
+    print("\n" + "=" * 60)
+    print("GENERATING COMPARISON VISUALIZATIONS")
+    print("=" * 60)
+
+    print("\n[1/4] Cost convergence plots...")
+    plot_cost_convergence(results_all, colors, labels, methods)
+
+    print("[2/4] Trajectory dynamics plots...")
+    plot_trajectory_dynamics(results_all, colors, labels, methods, v_max, a_max)
+
+    print("[3/4] 3D trajectory comparison...")
+    plot_3d_comparison(results_all, colors, labels, methods,
+                       A_list, b_list, pos_init, pos_final)
+
+    print("[4/4] Orthogonal views...")
+    plot_orthogonal_views(results_all, colors, labels, methods,
+                          A_list, b_list, pos_init, pos_final)
+
+    print_summary_table(results_all, labels, methods)
+
+    print("\n" + "=" * 60)
+    print("✓ COMPARISON COMPLETE!")
+    print("=" * 60 + "\n")
+
+
+# ============================================================================
 # USAGE EXAMPLE
 # ============================================================================
 """
