@@ -55,6 +55,7 @@ class PlannerConfig:
     """Validated planner parameters loaded from planner.yaml."""
     connectivity:     int   = 26
     clearance:        int   = 1
+    inflation_radius: float = 0.0
     box_half_extents: list  = field(default_factory=lambda: [5.0, 5.0, 5.0])
 
     @classmethod
@@ -79,6 +80,13 @@ class PlannerConfig:
                 f"planner.yaml: astar.clearance must be >= 0 (got {clearance})"
             )
 
+        inflation_radius = float(astar.get("inflation_radius", 0.0))
+        if inflation_radius < 0:
+            raise ValueError(
+                f"planner.yaml: astar.inflation_radius must be >= 0 "
+                f"(got {inflation_radius})"
+            )
+
         # ── Safe corridor ─────────────────────────────────────────────────────
         sc  = raw.get("safe_corridor", {})
         bhe = sc.get("box_half_extents", [5.0, 5.0, 5.0])
@@ -92,6 +100,7 @@ class PlannerConfig:
         return cls(
             connectivity     = connectivity,
             clearance        = clearance,
+            inflation_radius = inflation_radius,
             box_half_extents = bhe,
         )
 

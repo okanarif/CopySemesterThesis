@@ -32,6 +32,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import yaml
+from scipy.ndimage import binary_dilation
 
 # ── add traj_gen_utils to sys.path ────────────────────────────────────────────
 _swarm_dir      = os.path.dirname(os.path.abspath(__file__))
@@ -450,6 +451,17 @@ class Environment:
         self.cylinders = cylinders
         self.walls     = walls
         self._voxel_grid: Optional[VoxelGrid] = None  # lazy cache
+        self._inflation_radius: float = 0.0
+
+    @property
+    def inflation_radius(self) -> float:
+        return self._inflation_radius
+
+    @inflation_radius.setter
+    def inflation_radius(self, value: float) -> None:
+        if value != self._inflation_radius:
+            self._voxel_grid = None          # invalidate cached grid
+            self._inflation_radius = value
 
     # ── Construction ──────────────────────────────────────────────────────────
 
@@ -621,6 +633,20 @@ class Environment:
             mask = _points_in_polygon(pts, c).reshape(IX.shape)
 
             grid[cx_lo:cx_hi, cy_lo:cy_hi, :iz_hi] |= mask[:, :, np.newaxis]
+
+        # ── Obstacle inflation (binary dilation with spherical kernel) ────────
+        if self._inflation_radius > 0.0:
+            r_vox = int(np.ceil(self._inflation_radius / w.resolution))
+            diameter = 2 * r_vox + 1
+            ax = np.arange(diameter) - r_vox
+            XX, YY, ZZ = np.meshgrid(ax, ax, ax, indexing="ij")
+            struct = (XX ** 2 + YY ** 2 + ZZ ** 2) <= r_vox ** 2
+            grid = binary_dilation(grid, structure=struct).astype(bool)
+            log.debug(
+                f"Applied obstacle inflation: "
+                f"{self._inflation_radius:.2f} m → {r_vox} voxel radius  "
+                f"(kernel {diameter}×{diameter}×{diameter})"
+            )
 
         # ── Wrap in VoxelGrid ─────────────────────────────────────────────────
         # origin=(0,0,0): world↔index conversion is handled by WorldBounds,
