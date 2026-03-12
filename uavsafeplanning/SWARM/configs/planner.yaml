@@ -1,0 +1,20 @@
+# ──────────────────────────────────────────────────────────────
+# Planner Configuration
+# ──────────────────────────────────────────────────────────────
+#
+# astar
+#   connectivity : neighbour directions used by the A* search.
+#                  6  = face-adjacent only  (Manhattan moves)
+#                  18 = face + edge         (no body-diagonal)
+#                  26 = face + edge + corner (full 3-D diagonal)
+#                  26 recommended — gives shorter, smoother paths.
+#
+#   clearance    : voxel buffer kept around obstacles during the
+#                  line-of-sight (LOS) pruning step.
+#                  0 = no margin  (path may graze obstacle surface)
+#                  1 = one-voxel margin  (= resolution metres, recommended)
+# ──────────────────────────────────────────────────────────────
+
+astar:
+  connectivity: 26    # 6 | 18 | 26
+  clearance:    1     # voxels of safety margin during LOS pruning

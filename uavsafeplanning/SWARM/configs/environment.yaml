@@ -34,22 +34,22 @@ obstacles:
     - id:     "cyl_0"
       center: [10.0, 12.0]
       radius: 2.0
-      height: 15.0
+      height: 20.0
 
     - id:     "cyl_1"
       center: [38.0, 38.0]
       radius: 2.5
-      height: 18.0
+      height: 20.0
 
     - id:     "cyl_2"
       center: [15.0, 40.0]
       radius: 1.5
-      height: 12.0
+      height: 20.0
 
     - id:     "cyl_3"
       center: [42.0, 10.0]
       radius: 2.0
-      height: 14.0
+      height: 20.0
 
   # ── Rectangular wall obstacles ───────────────────────────────
   # Two walls that form a narrow passage.
@@ -62,7 +62,7 @@ obstacles:
         - [26.0,  0.0]
         - [26.0, 22.0]
         - [22.0, 22.0]
-      height: 15.0
+      height: 20.0
 
     - id:      "passage_wall_north"
       corners:
@@ -70,4 +70,4 @@ obstacles:
         - [26.0, 28.0]
         - [26.0, 50.0]
         - [22.0, 50.0]
-      height: 15.0
+      height: 20.0

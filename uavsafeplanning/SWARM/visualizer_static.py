@@ -112,9 +112,10 @@ def _box_wireframe(
 # ═════════════════════════════════════════════════════════════════════════════
 
 def plot_environment_3d(
-    env: Environment,
-    fleet: Optional["Fleet"] = None,
-    window_size: tuple[int, int] = (900, 650),
+    env:         Environment,
+    fleet:       Optional["Fleet"] = None,
+    paths:       Optional[list]    = None,
+    window_size: tuple[int, int]   = (900, 650),
 ) -> None:
     """
     Render the environment as an interactive 3-D Plotly scene in Jupyter.
@@ -126,9 +127,11 @@ def plot_environment_3d(
     Parameters
     ----------
     env         : Environment
-    fleet       : Fleet (optional) — when provided, UAV start/goal markers
-                  are drawn. Each UAV gets a distinct colour, a filled circle
-                  for its start (●) and a diamond for its goal (◆).
+    fleet       : Fleet (optional) — UAV start (●) and goal (◆) markers.
+    paths       : list[PlanResult] (optional) — when provided, each UAV's
+                  pruned A* path is drawn as a coloured line with waypoint
+                  dots, using the same colour as the UAV's start/goal markers.
+                  Expected duck-type: objects with .uav_id and .path_world.
     window_size : (width, height) in pixels for the embedded viewer.
     """
     w      = env.world
@@ -190,6 +193,44 @@ def plot_environment_3d(
             flatshading=True, showscale=False,
             hoverinfo="skip", name=wall.id,
         ))
+
+    # ── A* paths ─────────────────────────────────────────────────────────────
+    if paths is not None and fleet is not None:
+        # Build a colour lookup from fleet
+        color_map = {u.id: u.color for u in fleet.uavs}
+
+        for pr in paths:
+            col = color_map.get(pr.uav_id, "white")
+            pw  = pr.path_world   # (N, 3)
+
+            # Path line connecting waypoints
+            traces.append(go.Scatter3d(
+                x=pw[:, 0].tolist(), y=pw[:, 1].tolist(), z=pw[:, 2].tolist(),
+                mode="lines",
+                line=dict(color=col, width=4),
+                opacity=0.9,
+                name=f"{pr.uav_id} — path",
+                legendgroup=pr.uav_id,
+                showlegend=True,
+                hovertemplate=(
+                    f"<b>{pr.uav_id}</b><br>"
+                    "x=%{x:.1f}  y=%{y:.1f}  z=%{z:.1f}<extra></extra>"
+                ),
+            ))
+
+            # Intermediate waypoint dots (skip first/last = start/goal)
+            if len(pw) > 2:
+                mid = pw[1:-1]
+                traces.append(go.Scatter3d(
+                    x=mid[:, 0].tolist(), y=mid[:, 1].tolist(), z=mid[:, 2].tolist(),
+                    mode="markers",
+                    marker=dict(size=5, color=col,
+                                line=dict(color="white", width=1)),
+                    opacity=0.8,
+                    hoverinfo="skip",
+                    legendgroup=pr.uav_id,
+                    showlegend=False,
+                ))
 
     # ── UAV start / goal markers ──────────────────────────────────────────────
     if fleet is not None:
