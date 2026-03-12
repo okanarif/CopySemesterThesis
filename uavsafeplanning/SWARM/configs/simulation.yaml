@@ -1,0 +1,37 @@
+# ──────────────────────────────────────────────────────────────
+# Simulation / Animation Configuration
+# ──────────────────────────────────────────────────────────────
+#
+# dt               : time step between animation frames [s].
+#                    Smaller = smoother motion, more frames, larger HTML.
+#                    0.05 s → 20 fps equivalent.
+#                    0.10 s → 10 fps equivalent.
+#
+# trail_length     : how many seconds of history to draw as a trail
+#                    behind each drone [s].
+#                    0 = no trail, drone marker only.
+#
+# drone_size       : diameter of the sphere marker representing each
+#                    drone [px].
+#
+# frame_duration_ms: how long each frame is displayed in the browser
+#                    animation [ms].  Controls playback speed.
+#                    80 ms ≈ 12 fps  (good default for 3-D scenes).
+#
+# transition_ms    : Plotly transition duration between frames [ms].
+#                    Set to 0 for crisp jumps, or match frame_duration_ms
+#                    for smooth interpolation.
+#
+# output_html      : path (relative to the SWARM directory) where the
+#                    standalone HTML file will be written.
+#
+# window_size      : [width, height] of the embedded viewer [px].
+# ──────────────────────────────────────────────────────────────
+
+dt:                0.1    # s   — frame time step
+trail_length:      2.0     # s   — trail history length
+drone_size:        10      # px  — drone sphere diameter
+frame_duration_ms: 80      # ms  — playback frame duration
+transition_ms:     0       # ms  — frame transition smoothing
+output_html:       "simulation.html"
+window_size:       [1100, 700]
