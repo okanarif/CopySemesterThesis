@@ -16,5 +16,5 @@
 # ──────────────────────────────────────────────────────────────
 
 astar:
-  connectivity: 26    # 6 | 18 | 26
-  clearance:    1     # voxels of safety margin during LOS pruning
+  connectivity: 18    # 6 | 18 | 26
+  clearance:    0     # voxels of safety margin during LOS pruning
