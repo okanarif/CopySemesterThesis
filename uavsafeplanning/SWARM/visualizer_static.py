@@ -3,16 +3,23 @@ Static visualisation utilities for the SwarmPlanning pipeline.
 
 Functions
 ---------
-plot_environment_3d(env)
+plot_environment_3d(env, fleet=None)
     Interactive 3-D Plotly scene — mouse zoom / pan / rotate.
+    When a Fleet is supplied, UAV start (●) and goal (◆) markers are
+    overlaid, each UAV coloured from a distinct palette entry.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import plotly.graph_objects as go
 
 from environment import Environment
+
+if TYPE_CHECKING:
+    from uav import Fleet
 
 # ─── palette ─────────────────────────────────────────────────────────────────
 _CYL_COLOR      = "#4682B4"   # steelblue
@@ -106,7 +113,8 @@ def _box_wireframe(
 
 def plot_environment_3d(
     env: Environment,
-    window_size: tuple[int, int] = (800, 600),
+    fleet: Optional["Fleet"] = None,
+    window_size: tuple[int, int] = (900, 650),
 ) -> None:
     """
     Render the environment as an interactive 3-D Plotly scene in Jupyter.
@@ -118,6 +126,9 @@ def plot_environment_3d(
     Parameters
     ----------
     env         : Environment
+    fleet       : Fleet (optional) — when provided, UAV start/goal markers
+                  are drawn. Each UAV gets a distinct colour, a filled circle
+                  for its start (●) and a diamond for its goal (◆).
     window_size : (width, height) in pixels for the embedded viewer.
     """
     w      = env.world
@@ -180,6 +191,58 @@ def plot_environment_3d(
             hoverinfo="skip", name=wall.id,
         ))
 
+    # ── UAV start / goal markers ──────────────────────────────────────────────
+    if fleet is not None:
+        for uav in fleet.uavs:
+            sx, sy, sz = float(uav.start[0]), float(uav.start[1]), float(uav.start[2])
+            gx, gy, gz = float(uav.goal[0]),  float(uav.goal[1]),  float(uav.goal[2])
+            col = uav.color
+
+            # Start marker  ●
+            traces.append(go.Scatter3d(
+                x=[sx], y=[sy], z=[sz],
+                mode="markers+text",
+                marker=dict(symbol="circle", size=9, color=col,
+                            line=dict(color="white", width=1.5)),
+                text=[uav.id], textposition="top center",
+                textfont=dict(color=col, size=10, family="monospace"),
+                name=f"{uav.id} — start",
+                legendgroup=uav.id,
+                showlegend=True,
+                hovertemplate=(
+                    f"<b>{uav.id} — start</b><br>"
+                    f"x={sx:.1f}  y={sy:.1f}  z={sz:.1f}<extra></extra>"
+                ),
+            ))
+
+            # Goal marker  ◆
+            traces.append(go.Scatter3d(
+                x=[gx], y=[gy], z=[gz],
+                mode="markers+text",
+                marker=dict(symbol="diamond", size=9, color=col,
+                            line=dict(color="white", width=1.5)),
+                text=[uav.id], textposition="top center",
+                textfont=dict(color=col, size=10, family="monospace"),
+                name=f"{uav.id} — goal",
+                legendgroup=uav.id,
+                showlegend=True,
+                hovertemplate=(
+                    f"<b>{uav.id} — goal</b><br>"
+                    f"x={gx:.1f}  y={gy:.1f}  z={gz:.1f}<extra></extra>"
+                ),
+            ))
+
+            # Dashed connector line
+            traces.append(go.Scatter3d(
+                x=[sx, gx], y=[sy, gy], z=[sz, gz],
+                mode="lines",
+                line=dict(color=col, width=1.5, dash="dot"),
+                opacity=0.35,
+                hoverinfo="skip",
+                legendgroup=uav.id,
+                showlegend=False,
+            ))
+
     # ── layout & camera ───────────────────────────────────────────────────────
     axis_style = dict(
         color="white",
@@ -221,12 +284,22 @@ def plot_environment_3d(
         ),
     ]
 
+    _show_legend = fleet is not None and len(fleet.uavs) > 0
+
     fig = go.Figure(data=traces)
     fig.update_layout(
         width=width,
         height=height,
         paper_bgcolor=_BG_COLOR,
-        showlegend=False,
+        showlegend=_show_legend,
+        legend=dict(
+            x=1.0, y=1.0,
+            xanchor="right", yanchor="top",
+            bgcolor="rgba(30,30,46,0.85)",
+            bordercolor="#555577",
+            borderwidth=1,
+            font=dict(color="white", size=10),
+        ),
         margin=dict(l=0, r=0, t=40, b=0),
         scene=dict(
             bgcolor=_BG_COLOR,

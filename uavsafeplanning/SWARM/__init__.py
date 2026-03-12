@@ -15,6 +15,7 @@ from .environment import (
     CylinderObstacle,
     WallObstacle,
 )
+from .uav import UAVConfig, Fleet
 
 __all__ = [
     "get_logger",
@@ -23,4 +24,6 @@ __all__ = [
     "WorldBounds",
     "CylinderObstacle",
     "WallObstacle",
+    "UAVConfig",
+    "Fleet",
 ]
