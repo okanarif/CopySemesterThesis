@@ -247,7 +247,7 @@ def plot_environment_3d(
                 y=1.08,
                 xanchor="left",
                 yanchor="top",
-                showactive=True,
+                showactive=False,
                 bgcolor="#2A2A3E",
                 bordercolor="#555577",
                 font=dict(color="white", size=11),
