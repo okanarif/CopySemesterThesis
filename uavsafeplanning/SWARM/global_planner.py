@@ -52,9 +52,10 @@ log = get_logger(__name__)
 
 @dataclass
 class PlannerConfig:
-    """Validated A* planner parameters loaded from planner.yaml."""
-    connectivity: int = 26
-    clearance:    int = 1
+    """Validated planner parameters loaded from planner.yaml."""
+    connectivity:     int   = 26
+    clearance:        int   = 1
+    box_half_extents: list  = field(default_factory=lambda: [5.0, 5.0, 5.0])
 
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "PlannerConfig":
@@ -62,6 +63,7 @@ class PlannerConfig:
         with open(path, "r") as fh:
             raw = yaml.safe_load(fh) or {}
 
+        # ── A* ────────────────────────────────────────────────────────────────
         astar = raw.get("astar", {})
 
         connectivity = int(astar.get("connectivity", 26))
@@ -77,7 +79,21 @@ class PlannerConfig:
                 f"planner.yaml: astar.clearance must be >= 0 (got {clearance})"
             )
 
-        return cls(connectivity=connectivity, clearance=clearance)
+        # ── Safe corridor ─────────────────────────────────────────────────────
+        sc  = raw.get("safe_corridor", {})
+        bhe = sc.get("box_half_extents", [5.0, 5.0, 5.0])
+        if not (isinstance(bhe, list) and len(bhe) == 3):
+            raise ValueError(
+                "planner.yaml: safe_corridor.box_half_extents must be a list "
+                f"of 3 floats, e.g. [5.0, 5.0, 5.0]  (got {bhe})"
+            )
+        bhe = [float(v) for v in bhe]
+
+        return cls(
+            connectivity     = connectivity,
+            clearance        = clearance,
+            box_half_extents = bhe,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

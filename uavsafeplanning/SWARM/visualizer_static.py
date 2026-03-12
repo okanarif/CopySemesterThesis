@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import plotly.graph_objects as go
+from scipy.spatial import ConvexHull, HalfspaceIntersection
 
 from environment import Environment
 
@@ -107,6 +108,62 @@ def _box_wireframe(
     return xs, ys, zs
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Corridor helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _corridor_polytope_trace(
+    A:           np.ndarray,    # (n_c, 3) constraint normals
+    b:           np.ndarray,    # (n_c,)   offsets  (A @ x <= b)
+    interior_pt: np.ndarray,    # (3,)     known interior point
+    color:       str,
+    opacity:     float = 0.15,
+    name:        str   = "",
+    legendgroup: str   = "",
+    showlegend:  bool  = False,
+) -> Optional[go.Mesh3d]:
+    """
+    Convert a half-space polytope  (A @ x <= b)  to a Plotly Mesh3d trace.
+
+    Uses scipy HalfspaceIntersection to recover the vertices, then builds
+    a ConvexHull triangulation.  Returns None if the computation fails
+    (degenerate polytope, numerical issues, etc.).
+    """
+    try:
+        A = np.asarray(A, dtype=float)
+        b = np.asarray(b, dtype=float).ravel()
+
+        # scipy convention: [A | -b]  so that  A@x - b <= 0  ⟺  A@x <= b
+        hs     = np.hstack([A, -b[:, None]])
+        hs_int = HalfspaceIntersection(hs, interior_point=interior_pt)
+        verts  = np.asarray(hs_int.intersections, dtype=float)
+
+        if verts.shape[0] < 4:
+            return None
+
+        hull = ConvexHull(verts)
+        i_idx = [int(t[0]) for t in hull.simplices]
+        j_idx = [int(t[1]) for t in hull.simplices]
+        k_idx = [int(t[2]) for t in hull.simplices]
+
+        return go.Mesh3d(
+            x=verts[:, 0].tolist(),
+            y=verts[:, 1].tolist(),
+            z=verts[:, 2].tolist(),
+            i=i_idx, j=j_idx, k=k_idx,
+            color=color,
+            opacity=opacity,
+            flatshading=True,
+            showscale=False,
+            name=name,
+            legendgroup=legendgroup,
+            showlegend=showlegend,
+            hoverinfo="skip",
+        )
+    except Exception:
+        return None
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 3-D interactive view  (Plotly)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -115,6 +172,7 @@ def plot_environment_3d(
     env:         Environment,
     fleet:       Optional["Fleet"] = None,
     paths:       Optional[list]    = None,
+    corridors:   Optional[list]    = None,
     window_size: tuple[int, int]   = (900, 650),
 ) -> None:
     """
@@ -128,10 +186,12 @@ def plot_environment_3d(
     ----------
     env         : Environment
     fleet       : Fleet (optional) — UAV start (●) and goal (◆) markers.
-    paths       : list[PlanResult] (optional) — when provided, each UAV's
-                  pruned A* path is drawn as a coloured line with waypoint
-                  dots, using the same colour as the UAV's start/goal markers.
+    paths       : list[PlanResult] (optional) — pruned A* paths per UAV.
                   Expected duck-type: objects with .uav_id and .path_world.
+    corridors   : list[CorridorResult] (optional) — safe flight corridors per
+                  UAV drawn as semi-transparent convex polytopes.
+                  Expected duck-type: objects with .uav_id, .A_list, .b_list,
+                  and .waypoints.
     window_size : (width, height) in pixels for the embedded viewer.
     """
     w      = env.world
@@ -193,6 +253,37 @@ def plot_environment_3d(
             flatshading=True, showscale=False,
             hoverinfo="skip", name=wall.id,
         ))
+
+    # ── Safe corridors (transparent polytopes) ───────────────────────────────
+    if corridors is not None and fleet is not None:
+        color_map = {u.id: u.color for u in fleet.uavs}
+
+        for cr in corridors:
+            col  = color_map.get(cr.uav_id, "white")
+            wpts = cr.waypoints          # (N, 3) path waypoints
+            first_shown = True
+
+            for seg_idx, (A, b) in enumerate(zip(cr.A_list, cr.b_list)):
+                # Interior point = midpoint of the path segment covered by
+                # this corridor (segment i spans waypoints[i] → waypoints[i+1])
+                if seg_idx + 1 < len(wpts):
+                    interior = 0.5 * (wpts[seg_idx] + wpts[seg_idx + 1])
+                else:
+                    interior = wpts[seg_idx].copy()
+
+                trace = _corridor_polytope_trace(
+                    np.asarray(A, float),
+                    np.asarray(b, float).ravel(),
+                    interior_pt = interior,
+                    color       = col,
+                    opacity     = 0.12,
+                    name        = f"{cr.uav_id} — corridor",
+                    legendgroup = cr.uav_id,
+                    showlegend  = first_shown,
+                )
+                if trace is not None:
+                    traces.append(trace)
+                    first_shown = False
 
     # ── A* paths ─────────────────────────────────────────────────────────────
     if paths is not None and fleet is not None:

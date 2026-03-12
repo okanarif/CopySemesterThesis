@@ -13,8 +13,19 @@
 #                  line-of-sight (LOS) pruning step.
 #                  0 = no margin  (path may graze obstacle surface)
 #                  1 = one-voxel margin  (= resolution metres, recommended)
+#
+# safe_corridor
+#   box_half_extents : [bx, by, bz]  — half-sizes of the seed box used to
+#                      initialise each convex corridor around a path segment.
+#                      Given in metres (world coordinates).
+#                      The algorithm inflates / shrinks this box until it fits
+#                      inside the free space.  Tune this to trade corridor
+#                      tightness vs. coverage.
 # ──────────────────────────────────────────────────────────────
 
 astar:
   connectivity: 18    # 6 | 18 | 26
   clearance:    0     # voxels of safety margin during LOS pruning
+
+safe_corridor:
+  box_half_extents: [5.0, 5.0, 5.0]   # seed box half-extents [m]
