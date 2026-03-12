@@ -306,18 +306,22 @@ class STOPlanner:
             cost_corridor = cost_corridor / actual_samples
             
             # 7) Total weighted cost
-            cost_jerk = jerk_energy
+            # Note: jerk_energy may be a Python float (0.0) when N==1
+            # because get_energy() iterates range(N-1) = range(0) → 0.0.
+            # Wrap it in a tensor so downstream .item() calls are safe.
+            cost_jerk = (jerk_energy if hasattr(jerk_energy, 'item')
+                         else torch.tensor(float(jerk_energy)))
             cost_time = T_total
-            
+
             total_cost = (self.lambda_jerk * cost_jerk +
                          self.lambda_time * cost_time +
                          self.lambda_vel * cost_vel +
                          self.lambda_acc * cost_acc +
                          self.lambda_corridor * cost_corridor)
-            
+
             # 8) Backward pass
             total_cost.backward()
-            
+
             # Store costs
             self.cost_history["total"].append(total_cost.item())
             self.cost_history["jerk"].append(cost_jerk.item())

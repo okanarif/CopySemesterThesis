@@ -29,3 +29,32 @@ astar:
 
 safe_corridor:
   box_half_extents: [5.0, 5.0, 5.0]   # seed box half-extents [m]
+
+# ── STO trajectory optimizer ─────────────────────────────────────────────────
+#
+# max_iter           : total L-BFGS iterations (spread across phases)
+# lambda_jerk        : weight for jerk-energy objective  (never changes)
+# lambda_time        : weight for total-time objective    (never changes)
+# lambda_vel         : final weight for velocity-violation penalty
+# lambda_acc         : final weight for acceleration-violation penalty
+# lambda_corridor    : final weight for corridor-violation penalty
+# corridor_cost_type : penalty formulation  l2 | l1 | log
+# learn_rate         : L-BFGS learning rate
+# adaptive_weights   : ramp up constraint weights over phases (recommended)
+# weight_phases      : number of escalation phases
+# weight_scale_factor: multiplier applied at each phase boundary
+# n_samples          : trajectory sample count for result extraction
+# ─────────────────────────────────────────────────────────────────────────────
+sto:
+  max_iter:           50
+  lambda_jerk:        10.0
+  lambda_time:        0.05
+  lambda_vel:         120.0
+  lambda_acc:         5.0
+  lambda_corridor:    1000.0
+  corridor_cost_type: l2        # l1 | l2 | log
+  learn_rate:         0.05
+  adaptive_weights:   true
+  weight_phases:      3
+  weight_scale_factor: 5.0
+  n_samples:          300       # sample count for trajectory evaluation

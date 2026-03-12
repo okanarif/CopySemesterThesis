@@ -169,11 +169,12 @@ def _corridor_polytope_trace(
 # ═════════════════════════════════════════════════════════════════════════════
 
 def plot_environment_3d(
-    env:         Environment,
-    fleet:       Optional["Fleet"] = None,
-    paths:       Optional[list]    = None,
-    corridors:   Optional[list]    = None,
-    window_size: tuple[int, int]   = (900, 650),
+    env:          Environment,
+    fleet:        Optional["Fleet"] = None,
+    paths:        Optional[list]    = None,
+    corridors:    Optional[list]    = None,
+    trajectories: Optional[list]    = None,
+    window_size:  tuple[int, int]   = (900, 650),
 ) -> None:
     """
     Render the environment as an interactive 3-D Plotly scene in Jupyter.
@@ -182,17 +183,22 @@ def plot_environment_3d(
     --------
     Left-drag   rotate  |  Scroll   zoom  |  Right-drag   pan
 
+    Each UAV element type has its own independent legend entry so items can
+    be toggled individually:
+      ●  uav_X — start/goal  |  ── uav_X — A* path  |  □ uav_X — corridor
+      ▸  uav_X — trajectory
+
     Parameters
     ----------
-    env         : Environment
-    fleet       : Fleet (optional) — UAV start (●) and goal (◆) markers.
-    paths       : list[PlanResult] (optional) — pruned A* paths per UAV.
-                  Expected duck-type: objects with .uav_id and .path_world.
-    corridors   : list[CorridorResult] (optional) — safe flight corridors per
-                  UAV drawn as semi-transparent convex polytopes.
-                  Expected duck-type: objects with .uav_id, .A_list, .b_list,
-                  and .waypoints.
-    window_size : (width, height) in pixels for the embedded viewer.
+    env          : Environment
+    fleet        : Fleet (optional) — UAV start (●) and goal (◆) markers.
+    paths        : list[PlanResult] (optional) — pruned A* paths per UAV.
+    corridors    : list[CorridorResult] (optional) — safe flight corridors
+                   drawn as semi-transparent convex polytopes.
+    trajectories : list[TrajectoryResult] (optional) — STO-optimised
+                   trajectories coloured by speed (Viridis colorscale).
+                   Expected duck-type: objects with .uav_id, .pos, .vel_norm.
+    window_size  : (width, height) in pixels for the embedded viewer.
     """
     w      = env.world
     width, height = window_size
@@ -254,18 +260,21 @@ def plot_environment_3d(
             hoverinfo="skip", name=wall.id,
         ))
 
-    # ── Safe corridors (transparent polytopes) ───────────────────────────────
-    if corridors is not None and fleet is not None:
+    # Build shared colour map (used by corridors, paths, markers, trajectories)
+    color_map: dict[str, str] = {}
+    if fleet is not None:
         color_map = {u.id: u.color for u in fleet.uavs}
 
+    # ── Safe corridors (transparent polytopes) ───────────────────────────────
+    # legendgroup: "{uav_id}_corridor"  → toggled independently
+    if corridors is not None and fleet is not None:
         for cr in corridors:
-            col  = color_map.get(cr.uav_id, "white")
-            wpts = cr.waypoints          # (N, 3) path waypoints
+            col   = color_map.get(cr.uav_id, "white")
+            wpts  = cr.waypoints
+            group = f"{cr.uav_id}_corridor"
             first_shown = True
 
             for seg_idx, (A, b) in enumerate(zip(cr.A_list, cr.b_list)):
-                # Interior point = midpoint of the path segment covered by
-                # this corridor (segment i spans waypoints[i] → waypoints[i+1])
                 if seg_idx + 1 < len(wpts):
                     interior = 0.5 * (wpts[seg_idx] + wpts[seg_idx + 1])
                 else:
@@ -278,7 +287,7 @@ def plot_environment_3d(
                     color       = col,
                     opacity     = 0.12,
                     name        = f"{cr.uav_id} — corridor",
-                    legendgroup = cr.uav_id,
+                    legendgroup = group,
                     showlegend  = first_shown,
                 )
                 if trace is not None:
@@ -286,30 +295,27 @@ def plot_environment_3d(
                     first_shown = False
 
     # ── A* paths ─────────────────────────────────────────────────────────────
+    # legendgroup: "{uav_id}_path"  → toggled independently
     if paths is not None and fleet is not None:
-        # Build a colour lookup from fleet
-        color_map = {u.id: u.color for u in fleet.uavs}
-
         for pr in paths:
-            col = color_map.get(pr.uav_id, "white")
-            pw  = pr.path_world   # (N, 3)
+            col   = color_map.get(pr.uav_id, "white")
+            pw    = pr.path_world
+            group = f"{pr.uav_id}_path"
 
-            # Path line connecting waypoints
             traces.append(go.Scatter3d(
                 x=pw[:, 0].tolist(), y=pw[:, 1].tolist(), z=pw[:, 2].tolist(),
                 mode="lines",
                 line=dict(color=col, width=4),
                 opacity=0.9,
-                name=f"{pr.uav_id} — path",
-                legendgroup=pr.uav_id,
+                name=f"{pr.uav_id} — A* path",
+                legendgroup=group,
                 showlegend=True,
                 hovertemplate=(
-                    f"<b>{pr.uav_id}</b><br>"
+                    f"<b>{pr.uav_id} — A* path</b><br>"
                     "x=%{x:.1f}  y=%{y:.1f}  z=%{z:.1f}<extra></extra>"
                 ),
             ))
 
-            # Intermediate waypoint dots (skip first/last = start/goal)
             if len(pw) > 2:
                 mid = pw[1:-1]
                 traces.append(go.Scatter3d(
@@ -319,11 +325,71 @@ def plot_environment_3d(
                                 line=dict(color="white", width=1)),
                     opacity=0.8,
                     hoverinfo="skip",
-                    legendgroup=pr.uav_id,
+                    legendgroup=group,
                     showlegend=False,
                 ))
 
+    # ── STO trajectories (velocity-coloured) ─────────────────────────────────
+    # legendgroup: "{uav_id}_traj"  → toggled independently
+    # All trajectories share one colorbar (shown only on the first UAV's trace).
+    if trajectories is not None and fleet is not None:
+        global_v_max = max((u.v_max for u in fleet.uavs), default=5.0)
+        first_colorbar = True
+
+        for tr in trajectories:
+            col   = color_map.get(tr.uav_id, "white")
+            pos   = tr.pos        # (n, 3)
+            vn    = tr.vel_norm   # (n,)
+            group = f"{tr.uav_id}_traj"
+
+            # Thin base line — gives a clean path shape
+            traces.append(go.Scatter3d(
+                x=pos[:, 0].tolist(), y=pos[:, 1].tolist(), z=pos[:, 2].tolist(),
+                mode="lines",
+                line=dict(color=col, width=2),
+                opacity=0.35,
+                hoverinfo="skip",
+                legendgroup=group,
+                showlegend=False,
+            ))
+
+            # Dense markers coloured by speed — creates a velocity heat-map
+            traces.append(go.Scatter3d(
+                x=pos[:, 0].tolist(), y=pos[:, 1].tolist(), z=pos[:, 2].tolist(),
+                mode="markers",
+                marker=dict(
+                    size=3,
+                    color=vn.tolist(),
+                    colorscale="Viridis",
+                    cmin=0.0,
+                    cmax=global_v_max,
+                    showscale=first_colorbar,
+                    colorbar=dict(
+                        title=dict(
+                            text="Speed (m/s)",
+                            font=dict(color="white", size=10),
+                        ),
+                        x=1.08,
+                        thickness=14,
+                        len=0.55,
+                        tickfont=dict(color="white", size=9),
+                    ) if first_colorbar else None,
+                ),
+                opacity=0.9,
+                name=f"{tr.uav_id} — trajectory",
+                legendgroup=group,
+                showlegend=True,
+                hovertemplate=(
+                    f"<b>{tr.uav_id} — trajectory</b><br>"
+                    "x=%{x:.1f}  y=%{y:.1f}  z=%{z:.1f}<br>"
+                    "speed=%{marker.color:.2f} m/s<extra></extra>"
+                ),
+            ))
+            first_colorbar = False
+
     # ── UAV start / goal markers ──────────────────────────────────────────────
+    # legendgroup: "{uav_id}_start"  (start + connector)   → toggled together
+    #              "{uav_id}_goal"   (goal marker)          → toggled independently
     if fleet is not None:
         for uav in fleet.uavs:
             sx, sy, sz = float(uav.start[0]), float(uav.start[1]), float(uav.start[2])
@@ -339,7 +405,7 @@ def plot_environment_3d(
                 text=[uav.id], textposition="top center",
                 textfont=dict(color=col, size=10, family="monospace"),
                 name=f"{uav.id} — start",
-                legendgroup=uav.id,
+                legendgroup=f"{uav.id}_start",
                 showlegend=True,
                 hovertemplate=(
                     f"<b>{uav.id} — start</b><br>"
@@ -356,7 +422,7 @@ def plot_environment_3d(
                 text=[uav.id], textposition="top center",
                 textfont=dict(color=col, size=10, family="monospace"),
                 name=f"{uav.id} — goal",
-                legendgroup=uav.id,
+                legendgroup=f"{uav.id}_goal",
                 showlegend=True,
                 hovertemplate=(
                     f"<b>{uav.id} — goal</b><br>"
@@ -364,14 +430,14 @@ def plot_environment_3d(
                 ),
             ))
 
-            # Dashed connector line
+            # Dashed connector  (grouped with start)
             traces.append(go.Scatter3d(
                 x=[sx, gx], y=[sy, gy], z=[sz, gz],
                 mode="lines",
                 line=dict(color=col, width=1.5, dash="dot"),
                 opacity=0.35,
                 hoverinfo="skip",
-                legendgroup=uav.id,
+                legendgroup=f"{uav.id}_start",
                 showlegend=False,
             ))
 
