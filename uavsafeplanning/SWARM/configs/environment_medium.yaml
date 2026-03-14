@@ -1,0 +1,64 @@
+# ──────────────────────────────────────────────────────────────
+# Environment Configuration — MEDIUM
+# ──────────────────────────────────────────────────────────────
+#
+# Medium difficulty environment with moderate obstacle density.
+# Features:
+#   - 4 cylindrical obstacles
+#   - Medium passage (6 m gap) requiring coordination
+#   - Balanced challenge for multi-UAV planning
+#
+# This is the default/original environment configuration.
+# ──────────────────────────────────────────────────────────────
+
+world:
+  x_range:    [0.0, 50.0]
+  y_range:    [0.0, 50.0]
+  z_range:    [0.0, 20.0]
+  resolution: 0.5          # metres per voxel  →  100 × 100 × 40 = 400 000 voxels
+
+obstacles:
+
+  # ── Cylindrical obstacles ────────────────────────────────────
+  # Scattered columns representing trees / pillars.
+  cylinders:
+    - id:     "cyl_0"
+      center: [10.0, 12.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_1"
+      center: [38.0, 38.0]
+      radius: 2.5
+      height: 20.0
+
+    - id:     "cyl_2"
+      center: [15.0, 40.0]
+      radius: 1.5
+      height: 20.0
+
+    - id:     "cyl_3"
+      center: [42.0, 10.0]
+      radius: 2.0
+      height: 20.0
+
+  # ── Rectangular wall obstacles ───────────────────────────────
+  # Two walls that form a narrow passage.
+  # The gap is between y = 22.0 and y = 28.0  →  6 m wide passage
+  # centred on the line x ∈ [22, 26].
+  walls:
+    - id:      "passage_wall_south"
+      corners:
+        - [22.0,  0.0]
+        - [26.0,  0.0]
+        - [26.0, 22.0]
+        - [22.0, 22.0]
+      height: 20.0
+
+    - id:      "passage_wall_north"
+      corners:
+        - [22.0, 28.0]
+        - [26.0, 28.0]
+        - [26.0, 50.0]
+        - [22.0, 50.0]
+      height: 20.0

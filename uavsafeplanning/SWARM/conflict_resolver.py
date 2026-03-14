@@ -22,19 +22,21 @@ For each replan round:
    Δt = max(violation_duration, min_delta_t)
    where violation_duration = t_end - t_start.
 
-4. Find the STO segment in the loser's trajectory that *contains* t_start
-   (using the stored per-segment time_allocation).  Stretch that segment
-   by adding Δt to its duration.
+4. Find the segment in the loser's trajectory that *contains* t_start
+   (using the stored per-segment time_allocation).  Distribute Δt across
+   segments 0 … k_pre proportionally to their current durations so that
+   no single short segment is disproportionately stretched.
 
 5. Re-run STO for the loser with:
-   - temporal_only = True    (waypoints frozen — path shape unchanged)
-   - lambda_sep    = 0       (no separation penalty; delay is injected
-                              purely through the modified time_init)
-   - time_init_override      (current time_allocation with segment k += Δt)
-   - lambda_time_replan      (weak time penalty so the optimiser does not
-                              fight to reclaim the added time)
-
-   The STO polynomial is then C4-continuous everywhere.
+   - temporal_only = True        (waypoints frozen)
+   - lambda_sep    = 0           (no separation penalty)
+   - time_init_override          (distributed time allocation from step 4)
+   - frozen_segment_indices = [0..k_pre]
+       → tau[0..k_pre] locked at the increased values — the injected delay
+         cannot be optimised away
+       → tau[k_pre+1..end] free — post-conflict segments can adjust to
+         restore corridor / kinematic compliance
+   - lambda_time_replan          (weak time cost on free segments)
 
 6. Update traj_map with the new trajectory.
 
@@ -97,14 +99,8 @@ class ReplanConfig:
 
     Attributes
     ----------
-    lambda_time_replan : float
-        Overrides ``sto.lambda_time`` during replanning.  Set lower than
-        the base value so the optimiser does not fight to reclaim the
-        injected delay.
     max_replan_rounds : int
         Maximum detect → replan iterations.
-    replan_max_iter : int
-        L-BFGS iteration budget for each individual replan call.
     min_delta_t : float
         Minimum delay added to the loser's pre-violation segment [s].
         Guards against degenerate zero-duration violations.
@@ -114,6 +110,14 @@ class ReplanConfig:
         1.0 is fully conservative (full violation window).
         0.6–0.8 is usually sufficient; pair with more ``max_replan_rounds``
         so that any residual violation is cleaned up in a subsequent round.
+
+    Notes
+    -----
+    ``lambda_time_replan`` is applied only to the **free** post-conflict
+    segments (k_pre+1 … end).  Keep it small (≤ 0.05) so the optimizer
+    does not aggressively shorten those segments at the expense of corridor
+    compliance.  The pre-conflict segments (0 … k_pre) are frozen and
+    therefore unaffected by this weight.
     """
     lambda_time_replan: float = 0.01
     max_replan_rounds:  int   = 4
@@ -217,6 +221,37 @@ def _find_pre_violation_segment(
     return int(np.clip(k, 0, len(time_allocation) - 1))
 
 
+def _distribute_delta_t(
+    time_allocation: np.ndarray,
+    k_pre:           int,
+    delta_t:         float,
+) -> np.ndarray:
+    """
+    Distribute ``delta_t`` across segments ``0 … k_pre`` (inclusive),
+    proportionally to their current durations.
+
+    The total added time equals ``delta_t`` exactly, so the UAV still
+    arrives at the conflict zone ``delta_t`` seconds later.  Spreading the
+    delay avoids disproportionately stretching short segments, which would
+    otherwise create large velocity/acceleration spikes at their boundaries.
+
+    Parameters
+    ----------
+    time_allocation : (n_segments,) current per-segment durations [s]
+    k_pre           : index of the last pre-violation segment (inclusive)
+    delta_t         : total seconds to add across segments 0 … k_pre
+
+    Returns
+    -------
+    np.ndarray, shape (n_segments,) — modified time allocation
+    """
+    modified  = time_allocation.copy()
+    pre_total = modified[:k_pre + 1].sum()
+    for i in range(k_pre + 1):
+        modified[i] += delta_t * (modified[i] / pre_total)
+    return modified
+
+
 def _earliest_event_per_pair(
     events: List[ConflictEvent],
 ) -> List[ConflictEvent]:
@@ -250,12 +285,19 @@ def resolve_conflicts(
     """
     Resolve inter-UAV trajectory conflicts via winner-locked temporal delay.
 
-    For each violation the drone that traveled *less* arc-length through
-    the conflict window (the "loser") has its pre-violation STO segment
-    stretched by Δt = max(violation_duration, min_delta_t).  STO is
-    re-run with temporal_only=True and no separation penalty, producing a
-    smooth, C4-continuous trajectory that arrives at the conflict zone
-    after the winner has already passed through.
+    For each violation the drone that traveled *less* arc-length through the
+    conflict window (the "loser") has Δt distributed proportionally across its
+    pre-conflict segments (0 … k_pre) and those segment durations are then
+    **frozen** during the subsequent STO re-run.
+
+    This guarantees two things simultaneously:
+    - **Exact delay preservation**: tau[0..k_pre] are locked — the optimizer
+      cannot reclaim the injected delay, so the UAV always arrives at the
+      conflict zone Δt later.
+    - **Corridor / kinematic compliance**: tau[k_pre+1..end] remain free;
+      STO can adjust their timing to satisfy the soft corridor, velocity,
+      and acceleration constraints that may have been disturbed by the
+      changed boundary velocities at waypoint k_pre.
 
     Parameters
     ----------
@@ -315,8 +357,10 @@ def resolve_conflicts(
                 loser_traj.time_allocation, ev.t_start
             )
 
-            time_init_mod = loser_traj.time_allocation.copy()
-            time_init_mod[k_pre] += delta_t
+            # Distribute delta_t proportionally across segments 0..k_pre
+            time_init_mod = _distribute_delta_t(
+                loser_traj.time_allocation, k_pre, delta_t
+            )
 
             len_winner = _path_length_in_window(
                 traj_map[winner], ev.t_start, ev.t_end
@@ -332,28 +376,33 @@ def resolve_conflicts(
                 print(f"    path length      : {ev.uav_a} = {len_winner if winner == ev.uav_a else len_loser:.2f} m"
                       f"  |  {ev.uav_b} = {len_loser if loser == ev.uav_b else len_winner:.2f} m")
                 print(f"    winner (faster)  : {winner}  →  trajectory unchanged")
-                print(f"    loser  (slower)  : {loser}   →  segment {k_pre} "
-                      f"+= {delta_t:.2f} s  "
-                      f"({violation_duration:.2f} × {replan_cfg.delta_t_scale} = {violation_duration * replan_cfg.delta_t_scale:.2f}, "
-                      f"min={replan_cfg.min_delta_t})")
+                print(f"    loser  (slower)  : {loser}   →  "
+                      f"Δt={delta_t:.2f} s distributed across segs [0..{k_pre}]  "
+                      f"({violation_duration:.2f} × {replan_cfg.delta_t_scale}"
+                      f" = {violation_duration * replan_cfg.delta_t_scale:.2f},"
+                      f" min={replan_cfg.min_delta_t})")
+                for i in range(k_pre + 1):
+                    old_ti = loser_traj.time_allocation[i]
+                    new_ti = time_init_mod[i]
+                    print(f"      seg {i}: {old_ti:.3f} s → {new_ti:.3f} s"
+                          f"  (+{new_ti - old_ti:.3f} s)")
 
             uav = next(u for u in fleet.uavs if u.id == loser)
 
             new_tr = replan_single_trajectory(
-                uav                  = uav,
-                plan_result          = plan_map[loser],
-                corridor_result      = corr_map[loser],
-                sto_cfg              = sto_cfg,
-                frozen_trajectories  = [],          # no separation penalty
-                lambda_sep           = 0.0,
-                lambda_time_override = replan_cfg.lambda_time_replan,
-                replan_max_iter      = replan_cfg.replan_max_iter,
-                temporal_only        = True,
-                time_init_override   = time_init_mod,
-                verbose              = verbose,
+                uav                     = uav,
+                plan_result             = plan_map[loser],
+                corridor_result         = corr_map[loser],
+                sto_cfg                 = sto_cfg,
+                frozen_trajectories     = [],
+                lambda_sep              = 0.0,
+                lambda_time_override    = replan_cfg.lambda_time_replan,
+                replan_max_iter         = replan_cfg.replan_max_iter,
+                temporal_only           = True,
+                time_init_override      = time_init_mod,
+                frozen_segment_indices  = list(range(k_pre + 1)),
+                verbose                 = verbose,
             )
-
-            traj_map[loser] = new_tr
 
             if verbose:
                 old_T = loser_traj.total_time
@@ -361,6 +410,8 @@ def resolve_conflicts(
                 print(f"    ✓  {loser}  T: {old_T:.2f} s → {new_T:.2f} s"
                       f"  (Δ = {new_T - old_T:+.2f} s)"
                       f"  jerk = {new_tr.jerk_cost:.4f}\n")
+
+            traj_map[loser] = new_tr
 
         # ── 3. Re-detect conflicts ────────────────────────────────────────────
         updated        = [traj_map[u.id] for u in fleet.uavs]

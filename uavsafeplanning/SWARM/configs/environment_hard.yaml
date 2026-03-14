@@ -1,0 +1,193 @@
+# ──────────────────────────────────────────────────────────────
+# Environment Configuration — HARD
+# ──────────────────────────────────────────────────────────────
+#
+# Complex environment with high obstacle density and narrow passages.
+# Features:
+#   - 30 cylindrical obstacles (extremely dense forest scenario)
+#   - Single narrow passage (3 m gap) forcing bottleneck
+#   - Requires advanced conflict resolution and coordination
+#   - 100×100 m world with obstacles distributed throughout
+# ──────────────────────────────────────────────────────────────
+
+world:
+  x_range:    [0.0, 100.0]
+  y_range:    [0.0, 100.0]
+  z_range:    [0.0, 20.0]
+  resolution: 0.5          # metres per voxel  →  200 × 200 × 40 = 1 600 000 voxels
+
+obstacles:
+
+  # ── Cylindrical obstacles ────────────────────────────────────
+  # Very dense forest with obstacles distributed across the 100×100 m world.
+  cylinders:
+    - id:     "cyl_0"
+      center: [15.0, 20.0]
+      radius: 2.5
+      height: 20.0
+
+    - id:     "cyl_1"
+      center: [22.0, 45.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_2"
+      center: [28.0, 75.0]
+      radius: 2.5
+      height: 20.0
+
+    - id:     "cyl_3"
+      center: [35.0, 30.0]
+      radius: 1.8
+      height: 20.0
+
+    - id:     "cyl_4"
+      center: [38.0, 60.0]
+      radius: 2.2
+      height: 20.0
+
+    - id:     "cyl_5"
+      center: [42.0, 85.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_6"
+      center: [55.0, 25.0]
+      radius: 2.3
+      height: 20.0
+
+    - id:     "cyl_7"
+      center: [58.0, 55.0]
+      radius: 2.5
+      height: 20.0
+
+    - id:     "cyl_8"
+      center: [62.0, 70.0]
+      radius: 1.8
+      height: 20.0
+
+    - id:     "cyl_9"
+      center: [68.0, 40.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_10"
+      center: [72.0, 80.0]
+      radius: 2.4
+      height: 20.0
+
+    - id:     "cyl_11"
+      center: [78.0, 15.0]
+      radius: 1.9
+      height: 20.0
+
+    - id:     "cyl_12"
+      center: [82.0, 50.0]
+      radius: 2.2
+      height: 20.0
+
+    - id:     "cyl_13"
+      center: [85.0, 65.0]
+      radius: 2.5
+      height: 20.0
+
+    - id:     "cyl_14"
+      center: [90.0, 35.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_15"
+      center: [97.0, 97.0]
+      radius: 2.3
+      height: 20.0
+
+    - id:     "cyl_16"
+      center: [18.0, 65.0]
+      radius: 2.1
+      height: 20.0
+
+    - id:     "cyl_17"
+      center: [75.0, 28.0]
+      radius: 1.7
+      height: 20.0
+
+    - id:     "cyl_18"
+      center: [10.0, 35.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_19"
+      center: [25.0, 60.0]
+      radius: 2.3
+      height: 20.0
+
+    - id:     "cyl_20"
+      center: [32.0, 15.0]
+      radius: 1.9
+      height: 20.0
+
+    - id:     "cyl_21"
+      center: [45.0, 45.0]
+      radius: 2.1
+      height: 20.0
+
+    - id:     "cyl_22"
+      center: [60.0, 20.0]
+      radius: 2.4
+      height: 20.0
+
+    - id:     "cyl_23"
+      center: [60.0, 90.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_24"
+      center: [65.0, 10.0]
+      radius: 1.8
+      height: 20.0
+
+    - id:     "cyl_25"
+      center: [70.0, 62.0]
+      radius: 2.2
+      height: 20.0
+
+    - id:     "cyl_26"
+      center: [80.0, 42.0]
+      radius: 2.5
+      height: 20.0
+
+    - id:     "cyl_27"
+      center: [88.0, 75.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_28"
+      center: [92.0, 22.0]
+      radius: 2.3
+      height: 20.0
+
+    - id:     "cyl_29"
+      center: [95.0, 55.0]
+      radius: 1.9
+      height: 20.0
+
+  # ── Rectangular wall obstacles ───────────────────────────────
+  # Single narrow passage forcing all UAVs through a 3 m bottleneck.
+  # The gap is at y ∈ [48.5, 51.5] (center of 100×100 world) → 3 m wide
+  # Walls extend the full length of the world (x = 0 to 100 m)
+  walls:
+    - id:      "passage_wall_south"
+      corners:
+        - [48.0,   0.0]
+        - [52.0,   0.0]
+        - [52.0,  48.5]
+        - [48.0,  48.5]
+      height: 20.0
+
+    - id:      "passage_wall_north"
+      corners:
+        - [48.0,  51.5]
+        - [52.0,  51.5]
+        - [52.0, 100.0]
+        - [48.0, 100.0]
+      height: 20.0

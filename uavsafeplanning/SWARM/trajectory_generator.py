@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Union
 
 import numpy as np
+import torch
 import yaml
 
 # ── path bootstrap ─────────────────────────────────────────────────────────────
@@ -38,8 +39,9 @@ for _p in (_swarm_dir, _uavsafe_dir, _sto_dir):
         sys.path.insert(0, _p)
 
 from sto_swarm_planner import STO_Swarm_Planner
-from uav         import Fleet
-from logger      import get_logger
+from traj_gen_utils    import MINCO_S3NU
+from uav               import Fleet
+from logger            import get_logger
 
 log = get_logger(__name__)
 
@@ -244,17 +246,18 @@ def replan_single_trajectory(
     uav,
     plan_result,
     corridor_result,
-    sto_cfg:               STOConfig,
-    frozen_trajectories:   list,
-    lambda_sep:            float,
-    lambda_time_override:  float | None      = None,
-    replan_max_iter:       int   | None      = None,
-    temporal_only:         bool              = True,
-    time_init_override:    np.ndarray | None = None,
-    verbose:               bool              = True,
+    sto_cfg:                 STOConfig,
+    frozen_trajectories:     list,
+    lambda_sep:              float,
+    lambda_time_override:    float | None      = None,
+    replan_max_iter:         int   | None      = None,
+    temporal_only:           bool              = True,
+    time_init_override:      np.ndarray | None = None,
+    frozen_segment_indices:  list | None       = None,
+    verbose:                 bool              = True,
 ) -> TrajectoryResult:
     """
-    Re-run STO for a single UAV, optionally with a custom time initialisation.
+    Re-run STO for a single UAV, optionally with frozen segment durations.
 
     Parameters
     ----------
@@ -269,7 +272,11 @@ def replan_single_trajectory(
     temporal_only    : bool — freeze waypoints, only optimise tau
     time_init_override : np.ndarray, optional — per-segment time initialisation
         (n_segments,).  When provided, overrides the default seg_len/v_max
-        initialisation.  Use this to inject a pre-violation delay.
+        initialisation.  Typically the output of ``_distribute_delta_t``.
+    frozen_segment_indices : list of int, optional — indices of segments whose
+        tau must not change during optimisation.  Use with ``time_init_override``
+        to lock the pre-violation delay while letting post-conflict segments
+        adjust for corridor compliance.
     verbose          : bool
 
     Returns
@@ -301,28 +308,29 @@ def replan_single_trajectory(
 
     try:
         planner = STO_Swarm_Planner(
-            n_segments          = n_segments,
-            A_list              = cr.A_list,
-            b_list              = cr.b_list,
-            waypoints_init      = waypoints_init,
-            time_init           = np.array(time_init),
-            v_max               = uav.v_max,
-            a_max               = uav.a_max,
-            lambda_jerk         = sto_cfg.lambda_jerk,
-            lambda_time         = effective_time,
-            lambda_vel          = sto_cfg.lambda_vel,
-            lambda_acc          = sto_cfg.lambda_acc,
-            lambda_corridor     = sto_cfg.lambda_corridor,
-            corridor_cost_type  = sto_cfg.corridor_cost_type,
-            learn_rate          = sto_cfg.learn_rate,
-            max_iter            = effective_iter,
-            verbose             = verbose,
-            adaptive_weights    = sto_cfg.adaptive_weights,
-            weight_phases       = sto_cfg.weight_phases,
-            weight_scale_factor = sto_cfg.weight_scale_factor,
-            frozen_trajectories = frozen_trajectories,
-            lambda_sep          = lambda_sep,
-            temporal_only       = temporal_only,
+            n_segments              = n_segments,
+            A_list                  = cr.A_list,
+            b_list                  = cr.b_list,
+            waypoints_init          = waypoints_init,
+            time_init               = np.array(time_init),
+            v_max                   = uav.v_max,
+            a_max                   = uav.a_max,
+            lambda_jerk             = sto_cfg.lambda_jerk,
+            lambda_time             = effective_time,
+            lambda_vel              = sto_cfg.lambda_vel,
+            lambda_acc              = sto_cfg.lambda_acc,
+            lambda_corridor         = sto_cfg.lambda_corridor,
+            corridor_cost_type      = sto_cfg.corridor_cost_type,
+            learn_rate              = sto_cfg.learn_rate,
+            max_iter                = effective_iter,
+            verbose                 = verbose,
+            adaptive_weights        = sto_cfg.adaptive_weights,
+            weight_phases           = sto_cfg.weight_phases,
+            weight_scale_factor     = sto_cfg.weight_scale_factor,
+            frozen_trajectories     = frozen_trajectories,
+            lambda_sep              = lambda_sep,
+            temporal_only           = temporal_only,
+            frozen_segment_indices  = frozen_segment_indices,
         )
 
         planner.solve(
@@ -353,4 +361,127 @@ def replan_single_trajectory(
         violations      = res["violations"],
         runtime         = float(res["runtime"]),
         time_allocation = res["time_allocation"],
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MINCO-only temporal replan (no optimisation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def minco_replan_trajectory(
+    uav,
+    plan_result,
+    corridor_result,
+    existing_traj:    TrajectoryResult,
+    time_init_override: np.ndarray,
+    n_samples:        int  = 300,
+    verbose:          bool = True,
+) -> TrajectoryResult:
+    """
+    Re-time a single UAV trajectory using a caller-supplied time allocation.
+
+    Accepts a pre-computed ``time_init_override`` (e.g. with delta_t
+    distributed proportionally across pre-conflict segments) and performs a
+    **single MINCO closed-form solve** — no iterative optimisation.
+
+    MINCO enforces C4 continuity (pos / vel / acc / jerk / snap) at every
+    interior waypoint as a hard algebraic constraint, so the result is
+    guaranteed to be smooth regardless of the time change.
+
+    Parameters
+    ----------
+    uav                : UAVConfig
+    plan_result        : PlanResult
+    corridor_result    : CorridorResult  (used for n_segments count only)
+    existing_traj      : TrajectoryResult — original trajectory (for logging)
+    time_init_override : np.ndarray, shape (n_segments,) — new per-segment
+        durations to use.  The caller is responsible for computing these
+        (e.g. via ``_distribute_delta_t``).
+    n_samples          : int — number of time samples in the returned trajectory
+    verbose            : bool
+
+    Returns
+    -------
+    TrajectoryResult
+    """
+    import time as _time
+
+    pr = plan_result
+    cr = corridor_result
+
+    path_world     = pr.path_world
+    waypoints_init = path_world[1:-1]          # (N-2, 3); empty when N == 2
+    n_segments     = len(cr.A_list)
+
+    time_alloc = time_init_override.copy()
+
+    if verbose:
+        old_T = existing_traj.total_time
+        new_T = float(time_alloc.sum())
+        print(f"\n{'─' * 62}")
+        print(f"  MINCO REPLAN  ▶  {uav.id}   (no optimisation)")
+        print(f"{'─' * 62}")
+        print(f"  T: {old_T:.2f} s → {new_T:.2f} s  (Δ = {new_T - old_T:+.2f} s)")
+
+    t_start = _time.time()
+
+    # ── Build tensors ─────────────────────────────────────────────────────────
+    t_tensor = torch.tensor(time_alloc, dtype=torch.float32).view(1, n_segments, 1)
+
+    waypoints_tensor = torch.tensor(
+        waypoints_init[np.newaxis],   # (1, n_waypoints, 3)
+        dtype=torch.float32,
+    )
+
+    def _pva(vec):
+        return torch.tensor([[vec]], dtype=torch.float32)   # (1, 1, 3)
+
+    zeros3 = np.zeros(3)
+    headPVA = torch.cat([_pva(uav.start), _pva(zeros3), _pva(zeros3)], dim=1)  # (1, 3, 3)
+    tailPVA = torch.cat([_pva(uav.goal),  _pva(zeros3), _pva(zeros3)], dim=1)  # (1, 3, 3)
+
+    # ── MINCO closed-form solve (single forward pass, no grad) ────────────────
+    model = MINCO_S3NU(n_segments)
+    with torch.no_grad():
+        jerk_energy = model(headPVA, tailPVA, waypoints_tensor, t_tensor)
+        traj = model.get_trajectory()[0]
+
+    # ── Sample ───────────────────────────────────────────────────────────────
+    total_time = float(time_alloc.sum())
+    t_eval     = torch.linspace(0.0, total_time, steps=n_samples)
+
+    with torch.no_grad():
+        pos  = traj.pos(t_eval).numpy()
+        vel  = traj.vel(t_eval).numpy()
+        acc  = traj.acc(t_eval).numpy()
+
+    n = min(pos.shape[0], vel.shape[0], acc.shape[0])
+    pos, vel, acc = pos[:n], vel[:n], acc[:n]
+    t_eval_np = t_eval[:n].numpy()
+
+    vel_norm    = np.linalg.norm(vel, axis=1)
+    acc_norm    = np.linalg.norm(acc, axis=1)
+    vel_viol    = float(np.maximum(0.0, vel_norm - uav.v_max).max()) if n > 0 else 0.0
+    acc_viol    = float(np.maximum(0.0, acc_norm - uav.a_max).max()) if n > 0 else 0.0
+    jerk_val    = float(jerk_energy)
+    runtime     = _time.time() - t_start
+
+    if verbose:
+        print(f"  ✓  jerk = {jerk_val:.4f}  "
+              f"max_vel_viol = {vel_viol:.4f}  "
+              f"max_acc_viol = {acc_viol:.4f}  "
+              f"({runtime:.3f} s)\n")
+
+    return TrajectoryResult(
+        uav_id          = uav.id,
+        pos             = pos,
+        vel             = vel,
+        acc             = acc,
+        vel_norm        = vel_norm,
+        t_eval          = t_eval_np,
+        total_time      = total_time,
+        jerk_cost       = jerk_val,
+        violations      = {"vel": vel_viol, "acc": acc_viol, "corridor": 0.0},
+        runtime         = runtime,
+        time_allocation = time_alloc,
     )

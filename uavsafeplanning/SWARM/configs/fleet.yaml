@@ -9,11 +9,11 @@
 #   Required per UAV: id, start [x, y, z], goal [x, y, z]
 #   Optional per UAV: v_max, a_max, radius  (fall back to defaults)
 #
-# Scenario: three UAVs travel from the west side (x ≈ 3) to the
-# east side (x ≈ 47) of the 50×50×20 m world.  All three fly at
-# z = 5 m, which is below the passage walls (h = 15 m), so they
+# Scenario: three UAVs travel from the west side (x ≈ 5-10) to the
+# east side (x ≈ 90) of the 100×100×20 m world.  All three fly at
+# z = 5 m, which is below the passage walls (h = 20 m), so they
 # cannot fly over them.  The only opening through the wall at
-# x ∈ [22, 26] is the gap at y ∈ [22, 28] — forcing all three
+# x ∈ [48, 52] is the gap at y ∈ [48.5, 51.5] — forcing all three
 # UAVs to queue through the same narrow passage and creating the
 # space-time conflicts we want to resolve.
 # ──────────────────────────────────────────────────────────────
@@ -25,13 +25,13 @@ defaults:
 
 uavs:
   - id:    uav_0
-    start: [ 3.0,  5.0, 5.0]
-    goal:  [47.0,  5.0, 5.0]
+    start: [ 5.0, 10.0, 5.0]
+    goal:  [90.0, 10.0, 5.0]
 
   - id:    uav_1
-    start: [ 3.0, 25.0, 5.0]
-    goal:  [47.0, 25.0, 5.0]
+    start: [ 5.0, 50.0, 5.0]
+    goal:  [90.0, 50.0, 5.0]
 
   - id:    uav_2
-    start: [ 3.0, 45.0, 5.0]
-    goal:  [47.0, 45.0, 5.0]
+    start: [ 5.0, 90.0, 5.0]
+    goal:  [90.0, 90.0, 5.0]

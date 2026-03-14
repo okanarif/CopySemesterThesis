@@ -53,6 +53,7 @@ class STO_Swarm_Planner:
         frozen_trajectories: list = None,
         lambda_sep: float = 0.0,
         temporal_only: bool = False,
+        frozen_segment_indices: list = None,
     ):
         """
         Initialize STO planner.
@@ -113,6 +114,16 @@ class STO_Swarm_Planner:
         temporal_only : bool
             When True, freeze waypoint positions and only optimise the
             time allocation (tau).  Used for temporal de-confliction.
+        frozen_segment_indices : list of int, optional
+            Indices of segments whose time allocation must NOT be changed by
+            the optimiser.  The corresponding tau values are initialised from
+            ``time_init`` and held fixed throughout the run.  All other
+            segments' tau values remain free optimisation variables.
+
+            Typical use: conflict resolution with ``temporal_only=True``.
+            Pass ``list(range(k_pre + 1))`` to lock the pre-conflict segment
+            durations while letting post-conflict segments adjust freely to
+            restore corridor compliance.
         """
         self.n_segments = n_segments
         self.n_waypoints = waypoints_init.shape[0]
@@ -177,22 +188,47 @@ class STO_Swarm_Planner:
             [waypoints_init], dtype=torch.float32,
             requires_grad=not temporal_only,
         )
-        
+
+        # ── Frozen-segment setup ──────────────────────────────────────────────
+        _frozen = sorted(set(frozen_segment_indices or []))
+        self._frozen_indices = _frozen
+        self._frozen_set     = set(_frozen)
+        self._free_indices   = [i for i in range(n_segments)
+                                 if i not in self._frozen_set]
+
         # Initialize time allocation (unconstrained tau parameterization)
         time_init_tensor = torch.tensor(time_init, dtype=torch.float32).view(1, n_segments, 1)
         tau_init = time_to_tau(time_init_tensor)
-        self.tau = tau_init.clone().detach().requires_grad_(True)
-        
+
+        if self._frozen_indices:
+            # Frozen parts: held constant, no grad
+            self.tau_frozen = tau_init[:, self._frozen_indices, :].clone().detach()
+            # Free parts: optimised by L-BFGS
+            self.tau_free = (
+                tau_init[:, self._free_indices, :].clone().detach().requires_grad_(True)
+                if self._free_indices else None
+            )
+            self.tau = None   # not used when frozen_indices are given
+        else:
+            self.tau        = tau_init.clone().detach().requires_grad_(True)
+            self.tau_frozen = None
+            self.tau_free   = None
+
         # MINCO model
         self.model = MINCO_S3NU(n_segments)
-        
-        # Optimizer: temporal_only → only tau; otherwise both
-        opt_params = [self.tau] if temporal_only else [self.waypoints, self.tau]
-        self.optimizer = torch.optim.LBFGS(
-            opt_params,
-            lr=learn_rate,
-            line_search_fn="strong_wolfe"
-        )
+
+        # ── Optimizer params ──────────────────────────────────────────────────
+        opt_params = self._build_opt_params(temporal_only)
+        self._all_frozen = (len(opt_params) == 0)
+
+        if not self._all_frozen:
+            self.optimizer = torch.optim.LBFGS(
+                opt_params,
+                lr=learn_rate,
+                line_search_fn="strong_wolfe"
+            )
+        else:
+            self.optimizer = None
         
         # Storage
         self.cost_history = {
@@ -209,6 +245,39 @@ class STO_Swarm_Planner:
         self.solved = False
         self.runtime = 0.0
         
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _build_opt_params(self, temporal_only: bool) -> list:
+        """Return the list of tensors that the optimiser should update."""
+        if self._frozen_indices:
+            free_tau = [self.tau_free] if self.tau_free is not None else []
+            return free_tau if temporal_only else ([self.waypoints] + free_tau)
+        else:
+            return [self.tau] if temporal_only else [self.waypoints, self.tau]
+
+    def _build_full_tau(self) -> torch.Tensor:
+        """
+        Reconstruct the full (1, n_segments, 1) tau tensor by interleaving
+        frozen (no-grad) and free (grad) slices in segment order.
+
+        When no segments are frozen, returns ``self.tau`` directly.
+        """
+        if not self._frozen_indices:
+            return self.tau
+
+        parts      = []
+        free_pos   = 0
+        frozen_pos = 0
+        for seg_i in range(self.n_segments):
+            if seg_i in self._frozen_set:
+                parts.append(self.tau_frozen[:, frozen_pos:frozen_pos + 1, :])
+                frozen_pos += 1
+            else:
+                if self.tau_free is not None:
+                    parts.append(self.tau_free[:, free_pos:free_pos + 1, :])
+                    free_pos += 1
+        return torch.cat(parts, dim=1)   # (1, n_segments, 1)
+
     def solve(
         self,
         pos_init: np.ndarray,
@@ -242,6 +311,9 @@ class STO_Swarm_Planner:
                 print("STO TEMPORAL REPLAN (waypoints frozen)")
             else:
                 print("STO TRAJECTORY OPTIMIZATION")
+            if self._frozen_indices:
+                print(f"Frozen segments:  {self._frozen_indices}  "
+                      f"(tau fixed, {len(self._free_indices)} free)")
             print("=" * 60)
             print(f"Segments:       {self.n_segments}")
             print(f"Waypoints:      {self.n_waypoints}")
@@ -279,10 +351,12 @@ class STO_Swarm_Planner:
         def closure():
             """Compute objective and gradients"""
             self.optimizer.zero_grad()
-            
+
             # 1) Convert tau to positive time durations (clamped to prevent
-            #    degenerate solutions where segments grow unbounded)
-            t = tau_to_time(self.tau).clamp(min=0.01, max=100.0)
+            #    degenerate solutions where segments grow unbounded).
+            #    _build_full_tau() merges frozen (no-grad) and free (grad)
+            #    slices so that only free segments receive gradient updates.
+            t = tau_to_time(self._build_full_tau()).clamp(min=0.01, max=100.0)
             
             # 2) Build boundary conditions
             headPVA = torch.cat([self.headPVA_pos, self.headPVA_vel, self.headPVA_acc], dim=1)
@@ -390,8 +464,27 @@ class STO_Swarm_Planner:
             return total_cost
         
         # ── Optimization loop (with optional phase-based weight escalation) ───────
+        # When every segment is frozen there is nothing to optimise: a single
+        # closure() call (below) is enough to record costs and set self.solved.
+        if self._all_frozen:
+            with torch.no_grad():
+                t_frozen = tau_to_time(self._build_full_tau()).clamp(min=0.01, max=100.0)
+                headPVA_f = torch.cat([self.headPVA_pos, self.headPVA_vel, self.headPVA_acc], dim=1)
+                tailPVA_f = torch.cat([self.tailPVA_pos, self.tailPVA_vel, self.tailPVA_acc], dim=1)
+                je = self.model(headPVA_f, tailPVA_f, self.waypoints, t_frozen)
+            self.cost_history["jerk"].append(float(je))
+            self.cost_history["total"].append(float(je))
+            for k in ("time", "vel", "acc", "corridor", "separation"):
+                self.cost_history[k].append(0.0)
+            self.runtime = time_module.time() - start_time
+            self.solved  = True
+            if self.verbose:
+                print("\n  (all segments frozen — skipping optimisation)")
+                print(f"  jerk = {float(je):.6f}  runtime = {self.runtime:.3f} s\n")
+            return
+
         iters_per_phase = max(1, self.max_iter // self.weight_phases)
-        
+
         _has_sep = bool(self._frozen_interps and self.lambda_sep > 0)
         if self.verbose:
             hdr = (f"\n{'Iter':>4} | {'Phase':>5} | {'Total':>12} | {'Jerk':>10} | "
@@ -400,7 +493,7 @@ class STO_Swarm_Planner:
                 hdr += f" | {'Sep':>10}"
             print(hdr)
             print("-" * (110 if _has_sep else 98))
-        
+
         global_iter = 0
         for phase in range(self.weight_phases):
             # ── Phase transition: scale up constraint weights and reset L-BFGS ──
@@ -419,7 +512,7 @@ class STO_Swarm_Planner:
                 )
                 # Reset L-BFGS: old Hessian approximation is based on previous
                 # cost landscape and becomes misleading after a weight change.
-                opt_params = [self.tau] if self.temporal_only else [self.waypoints, self.tau]
+                opt_params = self._build_opt_params(self.temporal_only)
                 self.optimizer = torch.optim.LBFGS(
                     opt_params,
                     lr=self._learn_rate,
@@ -516,12 +609,14 @@ class STO_Swarm_Planner:
         
         # Extract optimized parameters (apply same clamp as closure)
         waypoints_opt = self.waypoints.detach().numpy()[0]
-        time_opt = tau_to_time(self.tau).clamp(min=0.01, max=100.0).detach().numpy()[0, :, 0]
+        with torch.no_grad():
+            full_tau = self._build_full_tau()
+        time_opt   = tau_to_time(full_tau).clamp(min=0.01, max=100.0).detach().numpy()[0, :, 0]
         total_time = time_opt.sum()
-        
+
         # Get final trajectory
         with torch.no_grad():
-            t_final = tau_to_time(self.tau).clamp(min=0.01, max=100.0)
+            t_final = tau_to_time(self._build_full_tau()).clamp(min=0.01, max=100.0)
             headPVA = torch.cat([self.headPVA_pos, self.headPVA_vel, self.headPVA_acc], dim=1)
             tailPVA = torch.cat([self.tailPVA_pos, self.tailPVA_vel, self.tailPVA_acc], dim=1)
             

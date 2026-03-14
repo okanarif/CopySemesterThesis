@@ -1,0 +1,52 @@
+# ──────────────────────────────────────────────────────────────
+# Environment Configuration — EASY
+# ──────────────────────────────────────────────────────────────
+#
+# Simplified environment with minimal obstacles for basic testing.
+# Features:
+#   - Only 2 cylindrical obstacles
+#   - Wide passage (10 m gap) for easy multi-UAV navigation
+#   - Fewer conflicts expected
+# ──────────────────────────────────────────────────────────────
+
+world:
+  x_range:    [0.0, 50.0]
+  y_range:    [0.0, 50.0]
+  z_range:    [0.0, 20.0]
+  resolution: 0.5          # metres per voxel  →  100 × 100 × 40 = 400 000 voxels
+
+obstacles:
+
+  # ── Cylindrical obstacles ────────────────────────────────────
+  # Minimal obstacles for basic navigation.
+  cylinders:
+    - id:     "cyl_0"
+      center: [15.0, 15.0]
+      radius: 2.0
+      height: 20.0
+
+    - id:     "cyl_1"
+      center: [35.0, 35.0]
+      radius: 2.0
+      height: 20.0
+
+  # ── Rectangular wall obstacles ───────────────────────────────
+  # Wide passage (10 m gap) for easy multi-UAV transit.
+  # The gap is between y = 20.0 and y = 30.0  →  10 m wide passage
+  # centred on the line x ∈ [22, 26].
+  walls:
+    - id:      "passage_wall_south"
+      corners:
+        - [22.0,  0.0]
+        - [26.0,  0.0]
+        - [26.0, 20.0]
+        - [22.0, 20.0]
+      height: 20.0
+
+    - id:      "passage_wall_north"
+      corners:
+        - [22.0, 30.0]
+        - [26.0, 30.0]
+        - [26.0, 50.0]
+        - [22.0, 50.0]
+      height: 20.0
