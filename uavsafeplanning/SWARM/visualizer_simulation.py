@@ -87,7 +87,7 @@ class SimulationConfig:
     """
     dt:                float       = 0.05
     trail_length:      float       = 2.0
-    drone_size:        int         = 10
+    drone_size:        int         = 5
     frame_duration_ms: int         = 80
     transition_ms:     int         = 0
     output_html:       str         = "simulation.html"

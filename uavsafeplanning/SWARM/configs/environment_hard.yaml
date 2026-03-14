@@ -204,7 +204,7 @@ fleet:
   defaults:
     v_max:  5.0    # m/s   — maximum speed
     a_max:  3.0    # m/s²  — maximum acceleration
-    radius: 0.5    # m     — safety radius for inter-UAV collision avoidance
+    radius: 0.1    # m     — safety radius for inter-UAV collision avoidance
 
   uavs:
     - id:    uav_0
