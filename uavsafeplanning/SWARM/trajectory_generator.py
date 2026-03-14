@@ -102,16 +102,17 @@ class STOConfig:
 @dataclass
 class TrajectoryResult:
     """STO-optimised trajectory for one UAV."""
-    uav_id:     str
-    pos:        np.ndarray   # (n_samples, 3) — world coords [m]
-    vel:        np.ndarray   # (n_samples, 3) — [m/s]
-    acc:        np.ndarray   # (n_samples, 3) — [m/s²]
-    vel_norm:   np.ndarray   # (n_samples,)   — speed scalar [m/s]
-    t_eval:     np.ndarray   # (n_samples,)   — time stamps [s]
-    total_time: float        # total trajectory duration [s]
-    jerk_cost:  float        # final jerk-energy cost
-    violations: dict         # {"vel": float, "acc": float, "corridor": float}
-    runtime:    float        # wall-clock optimisation time [s]
+    uav_id:          str
+    pos:             np.ndarray   # (n_samples, 3) — world coords [m]
+    vel:             np.ndarray   # (n_samples, 3) — [m/s]
+    acc:             np.ndarray   # (n_samples, 3) — [m/s²]
+    vel_norm:        np.ndarray   # (n_samples,)   — speed scalar [m/s]
+    t_eval:          np.ndarray   # (n_samples,)   — time stamps [s]
+    total_time:      float        # total trajectory duration [s]
+    jerk_cost:       float        # final jerk-energy cost
+    violations:      dict         # {"vel": float, "acc": float, "corridor": float}
+    runtime:         float        # wall-clock optimisation time [s]
+    time_allocation: np.ndarray   # (n_segments,) — per-segment durations [s]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -211,16 +212,17 @@ def generate_trajectories(
             ) from exc
 
         results.append(TrajectoryResult(
-            uav_id     = uav.id,
-            pos        = res["pos"],
-            vel        = res["vel"],
-            acc        = res["acc"],
-            vel_norm   = res["vel_norm"],
-            t_eval     = res["t_eval"],
-            total_time = float(res["total_time"]),
-            jerk_cost  = float(res["jerk_cost"]),
-            violations = res["violations"],
-            runtime    = float(res["runtime"]),
+            uav_id          = uav.id,
+            pos             = res["pos"],
+            vel             = res["vel"],
+            acc             = res["acc"],
+            vel_norm        = res["vel_norm"],
+            t_eval          = res["t_eval"],
+            total_time      = float(res["total_time"]),
+            jerk_cost       = float(res["jerk_cost"]),
+            violations      = res["violations"],
+            runtime         = float(res["runtime"]),
+            time_allocation = res["time_allocation"],
         ))
 
         log.debug(
@@ -232,3 +234,123 @@ def generate_trajectories(
         )
 
     return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Single-UAV replan (temporal de-confliction)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def replan_single_trajectory(
+    uav,
+    plan_result,
+    corridor_result,
+    sto_cfg:               STOConfig,
+    frozen_trajectories:   list,
+    lambda_sep:            float,
+    lambda_time_override:  float | None      = None,
+    replan_max_iter:       int   | None      = None,
+    temporal_only:         bool              = True,
+    time_init_override:    np.ndarray | None = None,
+    verbose:               bool              = True,
+) -> TrajectoryResult:
+    """
+    Re-run STO for a single UAV, optionally with a custom time initialisation.
+
+    Parameters
+    ----------
+    uav              : UAVConfig
+    plan_result      : PlanResult
+    corridor_result  : CorridorResult
+    sto_cfg          : STOConfig — base hyper-parameters
+    frozen_trajectories : list[(t_eval_np, pos_np, safety_dist)]
+    lambda_sep       : float — weight for the separation penalty (0 = disabled)
+    lambda_time_override : float, optional — reduced lambda_time for replan
+    replan_max_iter  : int, optional — override max_iter for replan
+    temporal_only    : bool — freeze waypoints, only optimise tau
+    time_init_override : np.ndarray, optional — per-segment time initialisation
+        (n_segments,).  When provided, overrides the default seg_len/v_max
+        initialisation.  Use this to inject a pre-violation delay.
+    verbose          : bool
+
+    Returns
+    -------
+    TrajectoryResult
+    """
+    pr = plan_result
+    cr = corridor_result
+
+    path_world     = pr.path_world
+    waypoints_init = path_world[1:-1]
+    seg_lengths    = np.linalg.norm(np.diff(path_world, axis=0), axis=1)
+    n_segments     = len(cr.A_list)
+
+    if time_init_override is not None:
+        time_init = time_init_override.tolist()
+    else:
+        time_init = (seg_lengths / max(uav.v_max, 1e-6)).tolist()
+
+    effective_time  = lambda_time_override if lambda_time_override is not None else sto_cfg.lambda_time
+    effective_iter  = replan_max_iter if replan_max_iter is not None else sto_cfg.max_iter
+
+    if verbose:
+        print(f"\n{'─' * 62}")
+        print(f"  REPLAN  ▶  {uav.id}   "
+              f"({n_segments} segments,  temporal_only={temporal_only},  "
+              f"λ_sep={lambda_sep:.0f})")
+        print(f"{'─' * 62}")
+
+    try:
+        planner = STO_Swarm_Planner(
+            n_segments          = n_segments,
+            A_list              = cr.A_list,
+            b_list              = cr.b_list,
+            waypoints_init      = waypoints_init,
+            time_init           = np.array(time_init),
+            v_max               = uav.v_max,
+            a_max               = uav.a_max,
+            lambda_jerk         = sto_cfg.lambda_jerk,
+            lambda_time         = effective_time,
+            lambda_vel          = sto_cfg.lambda_vel,
+            lambda_acc          = sto_cfg.lambda_acc,
+            lambda_corridor     = sto_cfg.lambda_corridor,
+            corridor_cost_type  = sto_cfg.corridor_cost_type,
+            learn_rate          = sto_cfg.learn_rate,
+            max_iter            = effective_iter,
+            verbose             = verbose,
+            adaptive_weights    = sto_cfg.adaptive_weights,
+            weight_phases       = sto_cfg.weight_phases,
+            weight_scale_factor = sto_cfg.weight_scale_factor,
+            frozen_trajectories = frozen_trajectories,
+            lambda_sep          = lambda_sep,
+            temporal_only       = temporal_only,
+        )
+
+        planner.solve(
+            pos_init  = uav.start,
+            vel_init  = np.zeros(3),
+            acc_init  = np.zeros(3),
+            pos_final = uav.goal,
+            vel_final = np.zeros(3),
+            acc_final = np.zeros(3),
+        )
+
+        res = planner.get_results(n_samples=sto_cfg.n_samples)
+
+    except Exception as exc:
+        raise RuntimeError(
+            f"STO replan failed for '{uav.id}': {exc}"
+        ) from exc
+
+    return TrajectoryResult(
+        uav_id          = uav.id,
+        pos             = res["pos"],
+        vel             = res["vel"],
+        acc             = res["acc"],
+        vel_norm        = res["vel_norm"],
+        t_eval          = res["t_eval"],
+        total_time      = float(res["total_time"]),
+        jerk_cost       = float(res["jerk_cost"]),
+        violations      = res["violations"],
+        runtime         = float(res["runtime"]),
+        time_allocation = res["time_allocation"],
+    )

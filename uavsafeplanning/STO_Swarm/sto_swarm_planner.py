@@ -6,6 +6,7 @@ Gradient-based optimization with MINCO representation and soft constraints.
 import torch
 import numpy as np
 import time as time_module
+from scipy.interpolate import interp1d
 from traj_gen_utils import MINCO_S3NU
 from sto_swarm_utils import tau_to_time, time_to_tau
 
@@ -49,6 +50,9 @@ class STO_Swarm_Planner:
         adaptive_weights: bool = False,
         weight_phases: int = 3,
         weight_scale_factor: float = 5.0,
+        frozen_trajectories: list = None,
+        lambda_sep: float = 0.0,
+        temporal_only: bool = False,
     ):
         """
         Initialize STO planner.
@@ -99,6 +103,16 @@ class STO_Swarm_Planner:
         weight_scale_factor : float
             Multiplicative factor applied to constraint weights at each phase
             boundary (only used if adaptive_weights=True)
+        frozen_trajectories : list, optional
+            List of (t_eval_np, pos_np, safety_dist) tuples representing
+            trajectories of other UAVs that this planner must avoid.
+            Used during conflict-resolution replanning.
+        lambda_sep : float
+            Weight for inter-UAV separation penalty. Only active when
+            frozen_trajectories is provided.
+        temporal_only : bool
+            When True, freeze waypoint positions and only optimise the
+            time allocation (tau).  Used for temporal de-confliction.
         """
         self.n_segments = n_segments
         self.n_waypoints = waypoints_init.shape[0]
@@ -107,6 +121,22 @@ class STO_Swarm_Planner:
         self.verbose = verbose
         self.max_iter = max_iter
         self._learn_rate = learn_rate
+        self.temporal_only = temporal_only
+        self.lambda_sep = lambda_sep
+        
+        # Build frozen trajectory interpolators for separation penalty
+        self._frozen_interps = []
+        if frozen_trajectories:
+            for (t_eval_np, pos_np, safety_d) in frozen_trajectories:
+                interp_fns = []
+                for k in range(3):
+                    f = interp1d(
+                        t_eval_np, pos_np[:, k],
+                        kind='linear', bounds_error=False,
+                        fill_value=(pos_np[0, k], pos_np[-1, k]),
+                    )
+                    interp_fns.append(f)
+                self._frozen_interps.append((interp_fns, float(safety_d)))
         
         # Adaptive weight settings
         self.adaptive_weights = adaptive_weights
@@ -142,8 +172,11 @@ class STO_Swarm_Planner:
         self.A_tensors = [torch.tensor(A, dtype=torch.float32) for A in A_list]
         self.b_tensors = [torch.tensor(b, dtype=torch.float32) for b in b_list]
         
-        # Initialize waypoints (direct optimization)
-        self.waypoints = torch.tensor([waypoints_init], dtype=torch.float32, requires_grad=True)
+        # Initialize waypoints
+        self.waypoints = torch.tensor(
+            [waypoints_init], dtype=torch.float32,
+            requires_grad=not temporal_only,
+        )
         
         # Initialize time allocation (unconstrained tau parameterization)
         time_init_tensor = torch.tensor(time_init, dtype=torch.float32).view(1, n_segments, 1)
@@ -153,9 +186,10 @@ class STO_Swarm_Planner:
         # MINCO model
         self.model = MINCO_S3NU(n_segments)
         
-        # Optimizer (only optimize waypoints and time allocation)
+        # Optimizer: temporal_only → only tau; otherwise both
+        opt_params = [self.tau] if temporal_only else [self.waypoints, self.tau]
         self.optimizer = torch.optim.LBFGS(
-            [self.waypoints, self.tau],
+            opt_params,
             lr=learn_rate,
             line_search_fn="strong_wolfe"
         )
@@ -167,7 +201,8 @@ class STO_Swarm_Planner:
             "time": [],
             "vel": [],
             "acc": [],
-            "corridor": []
+            "corridor": [],
+            "separation": [],
         }
         # Weight history: records phase snapshot at every phase boundary
         self.weight_history = []
@@ -203,7 +238,10 @@ class STO_Swarm_Planner:
         """
         if self.verbose:
             print("=" * 60)
-            print("STO TRAJECTORY OPTIMIZATION")
+            if self.temporal_only:
+                print("STO TEMPORAL REPLAN (waypoints frozen)")
+            else:
+                print("STO TRAJECTORY OPTIMIZATION")
             print("=" * 60)
             print(f"Segments:       {self.n_segments}")
             print(f"Waypoints:      {self.n_waypoints}")
@@ -222,6 +260,10 @@ class STO_Swarm_Planner:
             print(f"  λ_acc      = {self.lambda_acc:.2f}  →  {self._lambda_acc_final:.2f}")
             print(f"  λ_corridor = {self.lambda_corridor:.2f}  →  {self._lambda_corridor_final:.2f}"
                   f"  [{self.corridor_cost_type.upper()}]")
+            if self._frozen_interps:
+                print(f"\nSeparation penalty:")
+                print(f"  λ_sep      = {self.lambda_sep:.2f}")
+                print(f"  frozen trajectories: {len(self._frozen_interps)}")
         
         # Store boundary conditions (fixed, not optimized)
         self.headPVA_pos = torch.tensor([[pos_init]], dtype=torch.float32)
@@ -238,8 +280,9 @@ class STO_Swarm_Planner:
             """Compute objective and gradients"""
             self.optimizer.zero_grad()
             
-            # 1) Convert tau to positive time durations
-            t = tau_to_time(self.tau)
+            # 1) Convert tau to positive time durations (clamped to prevent
+            #    degenerate solutions where segments grow unbounded)
+            t = tau_to_time(self.tau).clamp(min=0.01, max=100.0)
             
             # 2) Build boundary conditions
             headPVA = torch.cat([self.headPVA_pos, self.headPVA_vel, self.headPVA_acc], dim=1)
@@ -305,10 +348,22 @@ class STO_Swarm_Planner:
             
             cost_corridor = cost_corridor / actual_samples
             
-            # 7) Total weighted cost
-            # Note: jerk_energy may be a Python float (0.0) when N==1
-            # because get_energy() iterates range(N-1) = range(0) → 0.0.
-            # Wrap it in a tensor so downstream .item() calls are safe.
+            # 7) Inter-UAV separation penalty (active during replanning)
+            cost_sep = torch.zeros(1, device=t.device)
+            if self._frozen_interps and self.lambda_sep > 0:
+                t_np = t_samples[:actual_samples].detach().cpu().numpy()
+                for (interp_fns, safety_d) in self._frozen_interps:
+                    other_pos_np = np.stack(
+                        [f(t_np) for f in interp_fns], axis=-1
+                    )
+                    other_pos = torch.tensor(
+                        other_pos_np, dtype=torch.float32, device=t.device,
+                    )
+                    dist = (pos[:actual_samples] - other_pos).norm(dim=-1)
+                    viol = torch.clamp(safety_d - dist, min=0.0)
+                    cost_sep = cost_sep + (viol ** 2).mean()
+            
+            # 8) Total weighted cost
             cost_jerk = (jerk_energy if hasattr(jerk_energy, 'item')
                          else torch.tensor(float(jerk_energy)))
             cost_time = T_total
@@ -317,9 +372,10 @@ class STO_Swarm_Planner:
                          self.lambda_time * cost_time +
                          self.lambda_vel * cost_vel +
                          self.lambda_acc * cost_acc +
-                         self.lambda_corridor * cost_corridor)
+                         self.lambda_corridor * cost_corridor +
+                         self.lambda_sep * cost_sep)
 
-            # 8) Backward pass
+            # 9) Backward pass
             total_cost.backward()
 
             # Store costs
@@ -329,16 +385,21 @@ class STO_Swarm_Planner:
             self.cost_history["vel"].append(cost_vel.item())
             self.cost_history["acc"].append(cost_acc.item())
             self.cost_history["corridor"].append(cost_corridor.item())
+            self.cost_history["separation"].append(cost_sep.item())
             
             return total_cost
         
         # ── Optimization loop (with optional phase-based weight escalation) ───────
         iters_per_phase = max(1, self.max_iter // self.weight_phases)
         
+        _has_sep = bool(self._frozen_interps and self.lambda_sep > 0)
         if self.verbose:
-            print(f"\n{'Iter':>4} | {'Phase':>5} | {'Total':>12} | {'Jerk':>10} | "
-                  f"{'Time':>8} | {'Vel':>10} | {'Acc':>10} | {'Corr':>10}")
-            print("-" * 98)
+            hdr = (f"\n{'Iter':>4} | {'Phase':>5} | {'Total':>12} | {'Jerk':>10} | "
+                   f"{'Time':>8} | {'Vel':>10} | {'Acc':>10} | {'Corr':>10}")
+            if _has_sep:
+                hdr += f" | {'Sep':>10}"
+            print(hdr)
+            print("-" * (110 if _has_sep else 98))
         
         global_iter = 0
         for phase in range(self.weight_phases):
@@ -358,8 +419,9 @@ class STO_Swarm_Planner:
                 )
                 # Reset L-BFGS: old Hessian approximation is based on previous
                 # cost landscape and becomes misleading after a weight change.
+                opt_params = [self.tau] if self.temporal_only else [self.waypoints, self.tau]
                 self.optimizer = torch.optim.LBFGS(
-                    [self.waypoints, self.tau],
+                    opt_params,
                     lr=self._learn_rate,
                     line_search_fn="strong_wolfe"
                 )
@@ -392,13 +454,16 @@ class STO_Swarm_Planner:
                 global_iter += 1
                 
                 if self.verbose and (global_iter % 5 == 0 or global_iter == 1):
-                    print(f"{global_iter:4d} | {phase+1:5d} | "
-                          f"{self.cost_history['total'][-1]:12.6f} | "
-                          f"{self.cost_history['jerk'][-1]:10.6f} | "
-                          f"{self.cost_history['time'][-1]:8.2f} | "
-                          f"{self.cost_history['vel'][-1]:10.6f} | "
-                          f"{self.cost_history['acc'][-1]:10.6f} | "
-                          f"{self.cost_history['corridor'][-1]:10.6f}")
+                    row = (f"{global_iter:4d} | {phase+1:5d} | "
+                           f"{self.cost_history['total'][-1]:12.6f} | "
+                           f"{self.cost_history['jerk'][-1]:10.6f} | "
+                           f"{self.cost_history['time'][-1]:8.2f} | "
+                           f"{self.cost_history['vel'][-1]:10.6f} | "
+                           f"{self.cost_history['acc'][-1]:10.6f} | "
+                           f"{self.cost_history['corridor'][-1]:10.6f}")
+                    if _has_sep:
+                        row += f" | {self.cost_history['separation'][-1]:10.6f}"
+                    print(row)
         
         # Stop timer
         self.runtime = time_module.time() - start_time
@@ -411,6 +476,8 @@ class STO_Swarm_Planner:
             print(f"Runtime:                  {self.runtime:.3f} seconds")
             print(f"Final jerk cost:          {self.cost_history['jerk'][-1]:.6f}")
             print(f"Final corridor violation: {self.cost_history['corridor'][-1]:.6f}")
+            if _has_sep:
+                print(f"Final separation cost:    {self.cost_history['separation'][-1]:.6f}")
             if self.adaptive_weights:
                 print(f"Phases completed:         {self.weight_phases}")
                 print(f"Final λ_vel:              {self.lambda_vel:.2f}")
@@ -447,14 +514,14 @@ class STO_Swarm_Planner:
         if not self.solved:
             raise RuntimeError("Trajectory not solved yet. Call solve() first.")
         
-        # Extract optimized parameters
+        # Extract optimized parameters (apply same clamp as closure)
         waypoints_opt = self.waypoints.detach().numpy()[0]
-        time_opt = tau_to_time(self.tau).detach().numpy()[0, :, 0]
+        time_opt = tau_to_time(self.tau).clamp(min=0.01, max=100.0).detach().numpy()[0, :, 0]
         total_time = time_opt.sum()
         
         # Get final trajectory
         with torch.no_grad():
-            t_final = tau_to_time(self.tau)
+            t_final = tau_to_time(self.tau).clamp(min=0.01, max=100.0)
             headPVA = torch.cat([self.headPVA_pos, self.headPVA_vel, self.headPVA_acc], dim=1)
             tailPVA = torch.cat([self.tailPVA_pos, self.tailPVA_vel, self.tailPVA_acc], dim=1)
             
@@ -486,8 +553,8 @@ class STO_Swarm_Planner:
         vel_violations = np.maximum(0, vel_norm - self.v_max)
         acc_violations = np.maximum(0, acc_norm - self.a_max)
         
-        max_vel_viol = vel_violations.max()
-        max_acc_viol = acc_violations.max()
+        max_vel_viol = float(vel_violations.max()) if actual_samples > 0 else 0.0
+        max_acc_viol = float(acc_violations.max()) if actual_samples > 0 else 0.0
         
         # Check corridor violations
         corridor_viols = []

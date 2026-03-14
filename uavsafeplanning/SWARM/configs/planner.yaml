@@ -74,3 +74,23 @@ sto:
   weight_phases:      3
   weight_scale_factor: 5.0
   n_samples:          300       # sample count for trajectory evaluation
+
+# ── Conflict-resolution replanning ──────────────────────────────────────────
+#
+# lambda_time_replan : overrides sto.lambda_time during replanning so the
+#                      optimiser does not fight to reclaim the injected delay.
+#                      Set lower than sto.lambda_time.
+#
+# max_replan_rounds  : maximum detect → replan iterations.
+#
+# replan_max_iter    : L-BFGS iteration budget per individual replan call.
+#
+# min_delta_t        : minimum temporal delay added to the loser's
+#                      pre-violation segment [s].  Guards against degenerate
+#                      near-zero-duration violations.
+# ─────────────────────────────────────────────────────────────────────────────
+replanning:
+  lambda_time_replan: 0.01
+  max_replan_rounds:  3
+  replan_max_iter:    50
+  min_delta_t:        0.5
