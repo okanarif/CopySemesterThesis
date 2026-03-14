@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────
-# Environment Configuration
+# Environment Configuration  (default — same layout as MEDIUM)
 # ──────────────────────────────────────────────────────────────
 #
 # World bounds define the 3-D planning space.
@@ -18,6 +18,10 @@
 #
 # All coordinates are in metres, in the world frame (z = 0 is ground).
 # Heights are measured from z = world.z_range[0] (the floor).
+#
+# Fleet: 3 UAVs crossing a 50×50 m world west→east.
+#   All three must funnel through the 6 m passage at x ∈ [22,26]
+#   (gap at y ∈ [22,28]) creating space-time conflicts.
 # ──────────────────────────────────────────────────────────────
 
 world:
@@ -71,3 +75,26 @@ obstacles:
         - [26.0, 50.0]
         - [22.0, 50.0]
       height: 20.0
+
+# ──────────────────────────────────────────────────────────────
+# Fleet
+# ──────────────────────────────────────────────────────────────
+fleet:
+
+  defaults:
+    v_max:  5.0    # m/s   — maximum speed
+    a_max:  3.0    # m/s²  — maximum acceleration
+    radius: 0.5    # m     — safety radius for inter-UAV collision avoidance
+
+  uavs:
+    - id:    uav_0
+      start: [ 5.0,  5.0, 5.0]
+      goal:  [45.0,  5.0, 5.0]
+
+    - id:    uav_1
+      start: [ 5.0, 25.0, 5.0]
+      goal:  [45.0, 25.0, 5.0]
+
+    - id:    uav_2
+      start: [ 5.0, 45.0, 5.0]
+      goal:  [45.0, 45.0, 5.0]

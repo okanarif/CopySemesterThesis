@@ -34,7 +34,7 @@
 # window_size      : [width, height] of the embedded viewer [px].
 # ──────────────────────────────────────────────────────────────
 
-environment:       "environment_hard.yaml"  # environment config to use
+environment:       "environment_medium.yaml"  # environment config to use
 dt:                0.1    # s   — frame time step
 trail_length:      2.0     # s   — trail history length
 drone_size:        10      # px  — drone sphere diameter

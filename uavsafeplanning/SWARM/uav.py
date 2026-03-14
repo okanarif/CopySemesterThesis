@@ -201,6 +201,14 @@ class Fleet:
         """
         Load and validate a fleet from a YAML file.
 
+        The file may be either:
+
+        * A **standalone fleet file** (the historical ``fleet.yaml`` format)
+          whose top-level keys are ``defaults:`` and ``uavs:``.
+        * An **environment file** that contains a nested ``fleet:`` block
+          alongside ``world:`` and ``obstacles:``.  In this case the
+          ``fleet:`` sub-mapping is extracted automatically.
+
         Raises
         ------
         ConfigValidationError
@@ -226,6 +234,16 @@ class Fleet:
             raise ConfigValidationError(
                 f"Top-level of '{config_path}' must be a YAML mapping."
             )
+
+        # ── Support environment files that embed a fleet: block ───────────────
+        if "fleet" in raw:
+            fleet_raw = raw["fleet"]
+            if not isinstance(fleet_raw, dict):
+                raise ConfigValidationError(
+                    f"['{config_path}'] 'fleet' key must be a YAML mapping."
+                )
+            raw = fleet_raw
+            log.debug("  → fleet block found inside environment file")
 
         warnings: List[_W] = []
 

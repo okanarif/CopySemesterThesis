@@ -8,6 +8,10 @@
 #   - Single narrow passage (3 m gap) forcing bottleneck
 #   - Requires advanced conflict resolution and coordination
 #   - 100×100 m world with obstacles distributed throughout
+#
+# Fleet: 3 UAVs crossing a 100×100 m world west→east.
+#   All three must funnel through the 3 m passage at x ∈ [48,52]
+#   (gap at y ∈ [48.5,51.5]) — the tightest bottleneck scenario.
 # ──────────────────────────────────────────────────────────────
 
 world:
@@ -191,3 +195,26 @@ obstacles:
         - [52.0, 100.0]
         - [48.0, 100.0]
       height: 20.0
+
+# ──────────────────────────────────────────────────────────────
+# Fleet
+# ──────────────────────────────────────────────────────────────
+fleet:
+
+  defaults:
+    v_max:  5.0    # m/s   — maximum speed
+    a_max:  3.0    # m/s²  — maximum acceleration
+    radius: 0.5    # m     — safety radius for inter-UAV collision avoidance
+
+  uavs:
+    - id:    uav_0
+      start: [ 5.0, 10.0, 5.0]
+      goal:  [90.0, 10.0, 5.0]
+
+    - id:    uav_1
+      start: [ 5.0, 50.0, 5.0]
+      goal:  [90.0, 50.0, 5.0]
+
+    - id:    uav_2
+      start: [ 5.0, 90.0, 5.0]
+      goal:  [90.0, 90.0, 5.0]
