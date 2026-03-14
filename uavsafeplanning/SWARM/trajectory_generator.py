@@ -1,10 +1,10 @@
 """
-Trajectory generator — wraps STOPlanner for multi-UAV use.
+Trajectory generator — wraps STO_Swarm_Planner for multi-UAV use.
 
 For each UAV in the fleet:
   1. Build initial waypoints from the pruned A* path  (path[1:-1]).
   2. Build initial time allocation: segment_length / v_max per segment.
-  3. Initialise STOPlanner with the UAV's safe corridors and dynamic limits.
+  3. Initialise STO_Swarm_Planner with the UAV's safe corridors and dynamic limits.
   4. Run L-BFGS optimisation (adaptive-weight STO).
   5. Return the sampled trajectory (position, velocity, acceleration).
 
@@ -31,13 +31,13 @@ import yaml
 # ── path bootstrap ─────────────────────────────────────────────────────────────
 _swarm_dir   = os.path.dirname(os.path.abspath(__file__))
 _uavsafe_dir = os.path.dirname(_swarm_dir)
-_sto_dir     = os.path.join(_uavsafe_dir, "STO")
+_sto_dir     = os.path.join(_uavsafe_dir, "STO_Swarm")
 
 for _p in (_swarm_dir, _uavsafe_dir, _sto_dir):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sto_planner import STOPlanner
+from sto_swarm_planner import STO_Swarm_Planner
 from uav         import Fleet
 from logger      import get_logger
 
@@ -143,7 +143,7 @@ def generate_trajectories(
 
     Raises
     ------
-    RuntimeError  — if STOPlanner fails for any UAV.
+    RuntimeError  — if STO_Swarm_Planner fails for any UAV.
     """
     plan_map     = {pr.uav_id: pr for pr in plan_results}
     corridor_map = {cr.uav_id: cr for cr in corridor_results}
@@ -170,9 +170,9 @@ def generate_trajectories(
                   f"{len(waypoints_init)} waypoint{'s' if len(waypoints_init) != 1 else ''})")
             print(f"{'─' * 62}")
 
-        # ── STOPlanner ────────────────────────────────────────────────────────
+        # ── STO_Swarm_Planner ─────────────────────────────────────────────────
         try:
-            planner = STOPlanner(
+            planner = STO_Swarm_Planner(
                 n_segments          = n_segments,
                 A_list              = cr.A_list,
                 b_list              = cr.b_list,
