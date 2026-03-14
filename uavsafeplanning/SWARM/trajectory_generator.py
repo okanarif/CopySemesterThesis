@@ -254,10 +254,12 @@ def replan_single_trajectory(
     temporal_only:           bool              = True,
     time_init_override:      np.ndarray | None = None,
     frozen_segment_indices:  list | None       = None,
+    frozen_waypoint_indices: list | None       = None,
     verbose:                 bool              = True,
 ) -> TrajectoryResult:
     """
-    Re-run STO for a single UAV, optionally with frozen segment durations.
+    Re-run STO for a single UAV, optionally with frozen segment durations
+    and/or frozen waypoint positions.
 
     Parameters
     ----------
@@ -269,7 +271,8 @@ def replan_single_trajectory(
     lambda_sep       : float — weight for the separation penalty (0 = disabled)
     lambda_time_override : float, optional — reduced lambda_time for replan
     replan_max_iter  : int, optional — override max_iter for replan
-    temporal_only    : bool — freeze waypoints, only optimise tau
+    temporal_only    : bool — freeze ALL waypoints, only optimise tau.
+        Ignored for the waypoint part when ``frozen_waypoint_indices`` is given.
     time_init_override : np.ndarray, optional — per-segment time initialisation
         (n_segments,).  When provided, overrides the default seg_len/v_max
         initialisation.  Typically the output of ``_distribute_delta_t``.
@@ -277,6 +280,12 @@ def replan_single_trajectory(
         tau must not change during optimisation.  Use with ``time_init_override``
         to lock the pre-violation delay while letting post-conflict segments
         adjust for corridor compliance.
+    frozen_waypoint_indices : list of int, optional — indices of interior
+        waypoints whose positions must not change during optimisation.
+        When provided, overrides ``temporal_only`` for the waypoint part.
+        Combine with ``frozen_segment_indices`` for Option A conflict
+        resolution: pre-conflict waypoints can move for corridor compliance
+        while their time allocations remain locked.
     verbose          : bool
 
     Returns
@@ -331,6 +340,7 @@ def replan_single_trajectory(
             lambda_sep              = lambda_sep,
             temporal_only           = temporal_only,
             frozen_segment_indices  = frozen_segment_indices,
+            frozen_waypoint_indices = frozen_waypoint_indices,
         )
 
         planner.solve(

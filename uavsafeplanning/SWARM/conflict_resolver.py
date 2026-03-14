@@ -27,8 +27,8 @@ For each replan round:
    segments 0 … k_pre proportionally to their current durations so that
    no single short segment is disproportionately stretched.
 
-5. Re-run STO for the loser with:
-   - temporal_only = True        (waypoints frozen)
+5. Re-run STO for the loser with (Option A — partial spatial+temporal freeze):
+   - temporal_only = False       (waypoints now controlled by frozen_waypoint_indices)
    - lambda_sep    = 0           (no separation penalty)
    - time_init_override          (distributed time allocation from step 4)
    - frozen_segment_indices = [0..k_pre]
@@ -36,6 +36,11 @@ For each replan round:
          cannot be optimised away
        → tau[k_pre+1..end] free — post-conflict segments can adjust to
          restore corridor / kinematic compliance
+   - frozen_waypoint_indices = [k_pre..n_waypoints-1]
+       → waypoints[k_pre..end] locked — post-conflict spatial path preserved
+       → waypoints[0..k_pre-1] FREE — pre-conflict segment positions can move
+         so that STO can fix any corridor violations introduced by the
+         changed time allocations while keeping the frozen delay in place
    - lambda_time_replan          (weak time cost on free segments)
 
 6. Update traj_map with the new trajectory.
@@ -290,14 +295,16 @@ def resolve_conflicts(
     pre-conflict segments (0 … k_pre) and those segment durations are then
     **frozen** during the subsequent STO re-run.
 
-    This guarantees two things simultaneously:
+    Option A (partial spatial+temporal freeze) guarantees three things:
     - **Exact delay preservation**: tau[0..k_pre] are locked — the optimizer
       cannot reclaim the injected delay, so the UAV always arrives at the
       conflict zone Δt later.
-    - **Corridor / kinematic compliance**: tau[k_pre+1..end] remain free;
-      STO can adjust their timing to satisfy the soft corridor, velocity,
-      and acceleration constraints that may have been disturbed by the
-      changed boundary velocities at waypoint k_pre.
+    - **Pre-conflict corridor compliance**: waypoints[0..k_pre-1] are free —
+      STO can move the pre-conflict path to satisfy corridor constraints even
+      after the time allocations have been stretched.
+    - **Post-conflict path integrity**: waypoints[k_pre..end] are frozen and
+      tau[k_pre+1..end] is free — the spatial path after the conflict zone
+      is preserved while timing can still adjust for compliance.
 
     Parameters
     ----------
@@ -389,6 +396,13 @@ def resolve_conflicts(
 
             uav = next(u for u in fleet.uavs if u.id == loser)
 
+            # Option A: freeze tau[0..k_pre] (delay preserved) AND
+            #   freeze waypoints[k_pre..end] (post-conflict path preserved),
+            #   while waypoints[0..k_pre-1] remain free so STO can fix any
+            #   corridor violations introduced by the stretched time.
+            n_waypoints_loser = len(loser_traj.time_allocation) - 1
+            frozen_wp_indices = list(range(k_pre, n_waypoints_loser))
+
             new_tr = replan_single_trajectory(
                 uav                     = uav,
                 plan_result             = plan_map[loser],
@@ -398,9 +412,10 @@ def resolve_conflicts(
                 lambda_sep              = 0.0,
                 lambda_time_override    = replan_cfg.lambda_time_replan,
                 replan_max_iter         = replan_cfg.replan_max_iter,
-                temporal_only           = True,
+                temporal_only           = False,
                 time_init_override      = time_init_mod,
                 frozen_segment_indices  = list(range(k_pre + 1)),
+                frozen_waypoint_indices = frozen_wp_indices,
                 verbose                 = verbose,
             )
 

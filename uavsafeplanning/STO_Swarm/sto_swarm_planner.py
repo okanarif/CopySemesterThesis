@@ -54,6 +54,7 @@ class STO_Swarm_Planner:
         lambda_sep: float = 0.0,
         temporal_only: bool = False,
         frozen_segment_indices: list = None,
+        frozen_waypoint_indices: list = None,
     ):
         """
         Initialize STO planner.
@@ -124,6 +125,22 @@ class STO_Swarm_Planner:
             Pass ``list(range(k_pre + 1))`` to lock the pre-conflict segment
             durations while letting post-conflict segments adjust freely to
             restore corridor compliance.
+        frozen_waypoint_indices : list of int, optional
+            Indices of interior waypoints whose **positions** must NOT be
+            changed by the optimiser.  When provided, this parameter takes
+            full control of the waypoint freeze behaviour and overrides
+            ``temporal_only`` for the waypoint part.
+
+            Waypoints NOT in this list are free spatial variables and receive
+            gradient updates.  Waypoints IN this list are held at their
+            ``waypoints_init`` values.
+
+            Typical use (Option A conflict resolution): pass
+            ``list(range(k_pre, n_waypoints))`` to freeze the post-conflict
+            spatial path while allowing pre-conflict waypoints (0..k_pre-1)
+            to move for corridor compliance.  Combine with
+            ``frozen_segment_indices=list(range(k_pre+1))`` to simultaneously
+            preserve the injected time delay.
         """
         self.n_segments = n_segments
         self.n_waypoints = waypoints_init.shape[0]
@@ -183,11 +200,47 @@ class STO_Swarm_Planner:
         self.A_tensors = [torch.tensor(A, dtype=torch.float32) for A in A_list]
         self.b_tensors = [torch.tensor(b, dtype=torch.float32) for b in b_list]
         
-        # Initialize waypoints
-        self.waypoints = torch.tensor(
-            [waypoints_init], dtype=torch.float32,
-            requires_grad=not temporal_only,
+        # ── Frozen-waypoint setup ─────────────────────────────────────────────
+        # When frozen_waypoint_indices is provided it takes full control of the
+        # waypoint freeze, overriding temporal_only for the waypoint part.
+        _frozen_wps = (
+            sorted(set(frozen_waypoint_indices))
+            if frozen_waypoint_indices is not None else None
         )
+        self._frozen_wp_indices = _frozen_wps
+        self._frozen_wp_set     = set(_frozen_wps) if _frozen_wps is not None else set()
+        self._free_wp_indices   = (
+            [i for i in range(self.n_waypoints) if i not in self._frozen_wp_set]
+            if _frozen_wps is not None else None
+        )
+
+        if self._frozen_wp_indices is not None:
+            # Partial freeze: split waypoints into frozen and free tensors
+            if self._frozen_wp_indices:
+                self.waypoints_frozen = torch.tensor(
+                    waypoints_init[self._frozen_wp_indices][np.newaxis],
+                    dtype=torch.float32,
+                )
+            else:
+                self.waypoints_frozen = None
+
+            if self._free_wp_indices:
+                self.waypoints_free = torch.tensor(
+                    waypoints_init[self._free_wp_indices][np.newaxis],
+                    dtype=torch.float32,
+                ).requires_grad_(True)
+            else:
+                self.waypoints_free = None
+
+            self.waypoints = None   # not used in partial-freeze mode
+        else:
+            # Original behaviour: all-or-nothing based on temporal_only
+            self.waypoints = torch.tensor(
+                [waypoints_init], dtype=torch.float32,
+                requires_grad=not temporal_only,
+            )
+            self.waypoints_frozen = None
+            self.waypoints_free   = None
 
         # ── Frozen-segment setup ──────────────────────────────────────────────
         _frozen = sorted(set(frozen_segment_indices or []))
@@ -249,11 +302,22 @@ class STO_Swarm_Planner:
 
     def _build_opt_params(self, temporal_only: bool) -> list:
         """Return the list of tensors that the optimiser should update."""
-        if self._frozen_indices:
-            free_tau = [self.tau_free] if self.tau_free is not None else []
-            return free_tau if temporal_only else ([self.waypoints] + free_tau)
+        # ── Waypoints ────────────────────────────────────────────────────────
+        if self._frozen_wp_indices is not None:
+            # Partial-freeze mode: only free waypoints enter the optimizer
+            wp_params = [self.waypoints_free] if self.waypoints_free is not None else []
+        elif not temporal_only:
+            wp_params = [self.waypoints]
         else:
-            return [self.tau] if temporal_only else [self.waypoints, self.tau]
+            wp_params = []
+
+        # ── Tau ──────────────────────────────────────────────────────────────
+        if self._frozen_indices:
+            tau_params = [self.tau_free] if self.tau_free is not None else []
+        else:
+            tau_params = [self.tau]
+
+        return wp_params + tau_params
 
     def _build_full_tau(self) -> torch.Tensor:
         """
@@ -277,6 +341,37 @@ class STO_Swarm_Planner:
                     parts.append(self.tau_free[:, free_pos:free_pos + 1, :])
                     free_pos += 1
         return torch.cat(parts, dim=1)   # (1, n_segments, 1)
+
+    def _build_full_waypoints(self) -> torch.Tensor:
+        """
+        Reconstruct the (1, n_waypoints, 3) waypoints tensor by interleaving
+        frozen (no-grad) and free (grad) slices in waypoint index order.
+
+        When no partial freeze is active (``frozen_waypoint_indices`` was not
+        provided), returns ``self.waypoints`` directly so that backward compat
+        is preserved.
+        """
+        if self._frozen_wp_indices is None:
+            return self.waypoints
+
+        if self.n_waypoints == 0:
+            return torch.zeros(1, 0, 3, dtype=torch.float32)
+
+        parts      = []
+        free_pos   = 0
+        frozen_pos = 0
+        for wp_i in range(self.n_waypoints):
+            if wp_i in self._frozen_wp_set:
+                parts.append(self.waypoints_frozen[:, frozen_pos:frozen_pos + 1, :])
+                frozen_pos += 1
+            else:
+                if self.waypoints_free is not None:
+                    parts.append(self.waypoints_free[:, free_pos:free_pos + 1, :])
+                    free_pos += 1
+
+        if not parts:
+            return torch.zeros(1, 0, 3, dtype=torch.float32)
+        return torch.cat(parts, dim=1)   # (1, n_waypoints, 3)
 
     def solve(
         self,
@@ -307,8 +402,14 @@ class STO_Swarm_Planner:
         """
         if self.verbose:
             print("=" * 60)
-            if self.temporal_only:
-                print("STO TEMPORAL REPLAN (waypoints frozen)")
+            if self._frozen_wp_indices is not None:
+                n_free_wps   = len(self._free_wp_indices)   if self._free_wp_indices   else 0
+                n_frozen_wps = len(self._frozen_wp_indices) if self._frozen_wp_indices else 0
+                print(f"STO REPLAN — partial spatial+temporal freeze")
+                print(f"  free waypoints  : {self._free_wp_indices or '[]'}"
+                      f"  ({n_free_wps} free / {n_frozen_wps} frozen)")
+            elif self.temporal_only:
+                print("STO TEMPORAL REPLAN (all waypoints frozen)")
             else:
                 print("STO TRAJECTORY OPTIMIZATION")
             if self._frozen_indices:
@@ -363,7 +464,7 @@ class STO_Swarm_Planner:
             tailPVA = torch.cat([self.tailPVA_pos, self.tailPVA_vel, self.tailPVA_acc], dim=1)
             
             # 3) MINCO: Compute polynomial coefficients and jerk energy
-            jerk_energy = self.model(headPVA, tailPVA, self.waypoints, t)
+            jerk_energy = self.model(headPVA, tailPVA, self._build_full_waypoints(), t)
             traj = self.model.get_trajectory()[0]
             
             # 4) Sample trajectory for constraint checking
@@ -471,7 +572,7 @@ class STO_Swarm_Planner:
                 t_frozen = tau_to_time(self._build_full_tau()).clamp(min=0.01, max=100.0)
                 headPVA_f = torch.cat([self.headPVA_pos, self.headPVA_vel, self.headPVA_acc], dim=1)
                 tailPVA_f = torch.cat([self.tailPVA_pos, self.tailPVA_vel, self.tailPVA_acc], dim=1)
-                je = self.model(headPVA_f, tailPVA_f, self.waypoints, t_frozen)
+                je = self.model(headPVA_f, tailPVA_f, self._build_full_waypoints(), t_frozen)
             self.cost_history["jerk"].append(float(je))
             self.cost_history["total"].append(float(je))
             for k in ("time", "vel", "acc", "corridor", "separation"):
@@ -608,7 +709,8 @@ class STO_Swarm_Planner:
             raise RuntimeError("Trajectory not solved yet. Call solve() first.")
         
         # Extract optimized parameters (apply same clamp as closure)
-        waypoints_opt = self.waypoints.detach().numpy()[0]
+        with torch.no_grad():
+            waypoints_opt = self._build_full_waypoints().detach().numpy()[0]
         with torch.no_grad():
             full_tau = self._build_full_tau()
         time_opt   = tau_to_time(full_tau).clamp(min=0.01, max=100.0).detach().numpy()[0, :, 0]
@@ -620,7 +722,7 @@ class STO_Swarm_Planner:
             headPVA = torch.cat([self.headPVA_pos, self.headPVA_vel, self.headPVA_acc], dim=1)
             tailPVA = torch.cat([self.tailPVA_pos, self.tailPVA_vel, self.tailPVA_acc], dim=1)
             
-            _ = self.model(headPVA, tailPVA, self.waypoints, t_final)
+            _ = self.model(headPVA, tailPVA, self._build_full_waypoints(), t_final)
             traj = self.model.get_trajectory()[0]
         
         # Sample trajectory
