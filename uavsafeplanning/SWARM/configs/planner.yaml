@@ -88,9 +88,17 @@ sto:
 # min_delta_t        : minimum temporal delay added to the loser's
 #                      pre-violation segment [s].  Guards against degenerate
 #                      near-zero-duration violations.
+#
+# delta_t_scale      : multiplier applied to the raw violation duration when
+#                      computing the delay:
+#                        Δt = max(violation_duration * delta_t_scale, min_delta_t)
+#                      1.0 = full violation duration (conservative).
+#                      0.6-0.8 = usually sufficient; combine with more
+#                      max_replan_rounds if needed.
 # ─────────────────────────────────────────────────────────────────────────────
 replanning:
   lambda_time_replan: 0.01
-  max_replan_rounds:  3
+  max_replan_rounds:  4
   replan_max_iter:    50
-  min_delta_t:        0.5
+  min_delta_t:        0.3
+  delta_t_scale:      0.4

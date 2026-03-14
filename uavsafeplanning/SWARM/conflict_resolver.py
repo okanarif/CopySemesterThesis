@@ -108,11 +108,18 @@ class ReplanConfig:
     min_delta_t : float
         Minimum delay added to the loser's pre-violation segment [s].
         Guards against degenerate zero-duration violations.
+    delta_t_scale : float
+        Multiplier applied to the raw violation duration:
+        ``Δt = max(violation_duration * delta_t_scale, min_delta_t)``.
+        1.0 is fully conservative (full violation window).
+        0.6–0.8 is usually sufficient; pair with more ``max_replan_rounds``
+        so that any residual violation is cleaned up in a subsequent round.
     """
     lambda_time_replan: float = 0.01
-    max_replan_rounds:  int   = 3
+    max_replan_rounds:  int   = 4
     replan_max_iter:    int   = 50
-    min_delta_t:        float = 0.5
+    min_delta_t:        float = 0.3
+    delta_t_scale:      float = 0.7
 
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> "ReplanConfig":
@@ -122,9 +129,10 @@ class ReplanConfig:
         rp = raw.get("replanning", {})
         return cls(
             lambda_time_replan = float(rp.get("lambda_time_replan", 0.01)),
-            max_replan_rounds  = int(rp.get("max_replan_rounds",    3)),
+            max_replan_rounds  = int(rp.get("max_replan_rounds",    4)),
             replan_max_iter    = int(rp.get("replan_max_iter",      50)),
-            min_delta_t        = float(rp.get("min_delta_t",        0.5)),
+            min_delta_t        = float(rp.get("min_delta_t",        0.3)),
+            delta_t_scale      = float(rp.get("delta_t_scale",      0.7)),
         )
 
 
@@ -297,7 +305,10 @@ def resolve_conflicts(
             winner, loser = _determine_winner_loser(ev, traj_map, locked_decisions)
 
             violation_duration = ev.t_end - ev.t_start
-            delta_t = max(violation_duration, replan_cfg.min_delta_t)
+            delta_t = max(
+                violation_duration * replan_cfg.delta_t_scale,
+                replan_cfg.min_delta_t,
+            )
 
             loser_traj = traj_map[loser]
             k_pre = _find_pre_violation_segment(
@@ -317,11 +328,14 @@ def resolve_conflicts(
             if verbose:
                 print(f"  Pair  {ev.uav_a} <-> {ev.uav_b}")
                 print(f"    violation window : [{ev.t_start:.2f} s → {ev.t_end:.2f} s]"
-                      f"  (Δt_viol = {violation_duration:.2f} s)")
+                      f"  (duration = {violation_duration:.2f} s)")
                 print(f"    path length      : {ev.uav_a} = {len_winner if winner == ev.uav_a else len_loser:.2f} m"
                       f"  |  {ev.uav_b} = {len_loser if loser == ev.uav_b else len_winner:.2f} m")
                 print(f"    winner (faster)  : {winner}  →  trajectory unchanged")
-                print(f"    loser  (slower)  : {loser}   →  segment {k_pre} += {delta_t:.2f} s")
+                print(f"    loser  (slower)  : {loser}   →  segment {k_pre} "
+                      f"+= {delta_t:.2f} s  "
+                      f"({violation_duration:.2f} × {replan_cfg.delta_t_scale} = {violation_duration * replan_cfg.delta_t_scale:.2f}, "
+                      f"min={replan_cfg.min_delta_t})")
 
             uav = next(u for u in fleet.uavs if u.id == loser)
 
