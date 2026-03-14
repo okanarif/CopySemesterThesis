@@ -97,8 +97,8 @@ sto:
 #                      max_replan_rounds if needed.
 # ─────────────────────────────────────────────────────────────────────────────
 replanning:
-  lambda_time_replan: 0.01
+  lambda_time_replan: 0.05
   max_replan_rounds:  4
   replan_max_iter:    50
   min_delta_t:        0.3
-  delta_t_scale:      0.4
+  delta_t_scale:      0.5
