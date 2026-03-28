@@ -5,7 +5,6 @@
 **Technical University of Munich (TUM)**  
 Autonomous Aerial Systems Lab · Chair of Information-oriented Control (ITR)
 
-[![PDF Thesis](https://img.shields.io/badge/Thesis-PDF-red?logo=adobeacrobatreader)](docs/Semester_Thesis.pdf)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-gradient--based-EE4C2C?logo=pytorch)](https://pytorch.org/)
 [![Plotly](https://img.shields.io/badge/Plotly-interactive--3D-3F4F75?logo=plotly)](https://plotly.com/)
@@ -14,69 +13,51 @@ Autonomous Aerial Systems Lab · Chair of Information-oriented Control (ITR)
 
 ---
 
-## Overview
+## Thesis
 
-This repository contains the implementation developed for the **Semester Thesis** at the
-[Autonomous Aerial Systems Lab](https://www.ce.cit.tum.de/itr/home/), TUM.
-The work focuses on **safe trajectory planning for a fleet of UAVs** operating in
-cluttered, shared 3-D environments.
+<div align="center">
+  <a href="docs/Semester_Thesis.pdf">
+    <img src="docs/thesis_preview-01.png" width="520" alt="Semester Thesis — click to open PDF">
+  </a>
+  <br/>
+  <sub>📄 Click the cover to open the full thesis PDF</sub>
+</div>
 
-Two tightly coupled planning layers are developed and integrated:
+---
+
+## Modules
 
 | Module | Description |
 |---|---|
 | **STO** (Spatio-Temporal Optimizer) | Gradient-based single-UAV trajectory optimizer using MINCO (5th-order polynomial) representation and L-BFGS |
+| **MIQP** (Mixed-Integer Quadratic Program) | Exact convex corridor-constrained trajectory planner using MINCO; used as a benchmark reference against STO |
 | **Swarm Planner** | Multi-UAV pipeline: A\* global planning → convex safe corridor generation → STO optimization → space-time conflict detection & replanning |
 
-📄 **Full thesis:** [docs/Semester_Thesis.pdf](docs/Semester_Thesis.pdf)
-
 ---
 
-## Demos
-
-### Swarm Simulation — Initial Planning
+## UAV Swarm Trajectory Generation Without Collision Optimization
 
 <div align="center">
-<img src="docs/simulation.gif" width="800" alt="Swarm simulation — initial trajectories">
+<img src="docs/simulation.gif" width="800" alt="Swarm trajectories — no collision optimization">
 </div>
 
-### Swarm Simulation — After Conflict Resolution
+## After Collision Resolve
 
 <div align="center">
-<img src="docs/updated_simulation.gif" width="800" alt="Swarm simulation — after conflict resolution">
+<img src="docs/updated_simulation.gif" width="800" alt="Swarm trajectories — after conflict resolution">
 </div>
 
 ---
 
-## Results
-
-### STO vs. MIQP Trajectory Comparison
+## Results — STO vs. MIQP Comparison
 
 <div align="center">
-<img src="uavsafeplanning/figures/STO_MIQP_Comparison_3d_iso.png" width="48%">
-<img src="uavsafeplanning/figures/STO_MIQP_Comparison_3d_perpendicular.png" width="48%">
+<img src="uavsafeplanning/figures/STO_MIQP_Comparison_3d_perpendicular.png" width="70%" alt="3D trajectory — orthogonal (XY) view">
 </div>
 
 <div align="center">
-<img src="uavsafeplanning/figures/STO_MIQP_Comparison_Kinematics.png" width="48%">
-<img src="uavsafeplanning/figures/STO_MIQP_Comparison_Kinematics_2.png" width="48%">
-</div>
-
-### Swarm Planning Pipeline
-
-<div align="center">
-<img src="uavsafeplanning/figures/swarm_map.png" width="32%" alt="Environment map">
-<img src="uavsafeplanning/figures/swarm_astar.png" width="32%" alt="A* global paths">
-<img src="uavsafeplanning/figures/swarm_safe_corridors.png" width="32%" alt="Safe corridors">
-</div>
-
-<div align="center">
-<img src="uavsafeplanning/figures/swarm_genrated_trajectory.png" width="48%" alt="Generated trajectories">
-<img src="uavsafeplanning/figures/swarm_safe_conflict.png" width="48%" alt="Detected conflicts">
-</div>
-
-<div align="center">
-<img src="uavsafeplanning/figures/swarm_safe_conflict_solver_result.png" width="60%" alt="Conflict resolution result">
+<img src="uavsafeplanning/figures/STO_MIQP_Comparison_Kinematics.png" width="48%" alt="Velocity profile comparison">
+<img src="uavsafeplanning/figures/STO_MIQP_Comparison_Kinematics_2.png" width="48%" alt="Acceleration profile comparison">
 </div>
 
 ---
@@ -86,32 +67,49 @@ Two tightly coupled planning layers are developed and integrated:
 ```
 uavsafeplanning/
 ├── STO/
-│   ├── STO.ipynb                  # Single-UAV STO demo & benchmarks
-│   └── sto_planner.py             # Core STO optimizer (L-BFGS + MINCO)
+│   ├── STO.ipynb                          # Single-UAV STO demo & benchmarks
+│   ├── sto_planner.py                     # Core STO optimizer (L-BFGS + MINCO)
+│   ├── sto_visualizer.py
+│   └── utils.py
+│
+├── MIQP/
+│   ├── MIQP.ipynb                         # MIQP demo & benchmark notebook
+│   ├── miqp_planner.py                    # MIQP trajectory planner (CVXPY)
+│   ├── MIQP_MINCO_solver.py               # MINCO-based MIQP solver
+│   └── miqp_visualizer.py
+│
+├── STO_Cost_Comparison/
+│   ├── STO_Cost_Comparison.ipynb          # L1 / L2 / log cost function comparison
+│   ├── sto_cost_comparison_planner.py
+│   ├── cost_comparison_utils.py
+│   └── sto_cost_comparison_visualizer.py
+│
+├── STO_MIQP_Comparison/
+│   └── STO_VS_MIQP_Comparison.ipynb       # Head-to-head STO vs. MIQP analysis
 │
 ├── SWARM/
-│   ├── SwarmPlanning.ipynb        # Full swarm planning demo notebook
-│   ├── SingleUAV.ipynb            # Single UAV within swarm context
-│   ├── environment.py             # 3-D voxel environment (cylinders + walls)
-│   ├── global_planner.py          # A* path planner (6 / 18 / 26-connectivity)
-│   ├── safe_corridor.py           # Convex safe corridor generation
-│   ├── conflict_detector.py       # Space-time conflict detection (proximity + LP)
-│   ├── conflict_resolver.py       # Temporal-delay conflict resolution + replanning
-│   ├── trajectory_generator.py    # Trajectory sampling & post-processing
-│   ├── visualizer_simulation.py   # 3-D Plotly animation renderer
-│   ├── visualizer_static.py       # Static figure renderer
-│   ├── uav.py                     # UAV data model
-│   └── configs/                   # YAML configs (environment, planner, fleet)
+│   ├── SwarmPlanning.ipynb                # Full swarm planning demo notebook
+│   ├── SingleUAV.ipynb                    # Single UAV within swarm context
+│   ├── environment.py                     # 3-D voxel environment (cylinders + walls)
+│   ├── global_planner.py                  # A* path planner (6 / 18 / 26-connectivity)
+│   ├── safe_corridor.py                   # Convex safe corridor generation
+│   ├── conflict_detector.py               # Space-time conflict detection (proximity + LP)
+│   ├── conflict_resolver.py               # Temporal-delay conflict resolution + replanning
+│   ├── trajectory_generator.py
+│   ├── visualizer_simulation.py           # 3-D Plotly animation renderer
+│   ├── visualizer_static.py
+│   ├── uav.py
+│   └── configs/                           # YAML configs (environment, planner, fleet)
 │
-├── STO_Swarm/                     # STO adapted for swarm replanning
+├── STO_Swarm/                             # STO adapted for swarm replanning
 │   ├── sto_swarm_planner.py
 │   ├── sto_swarm_utils.py
 │   └── sto_swarm_visualizer.py
 │
 ├── traj_gen_utils/
-│   └── minco.py                   # MINCO trajectory representation
+│   └── minco.py                           # MINCO trajectory representation
 │
-└── figures/                       # Result figures
+└── figures/                               # Result figures
 ```
 
 ---
@@ -129,7 +127,14 @@ $$\min_{c, T} \; \lambda_{\text{jerk}} \, J_{\text{jerk}} + \lambda_T \, J_T + \
 L-BFGS with an optional adaptive weight escalation scheme drives fast convergence.
 Corridor penalties support L1, L2, and log-barrier formulations.
 
-### 2 · Multi-UAV Swarm Planner
+### 2 · MIQP Baseline
+
+The MIQP planner solves the same corridor-constrained trajectory problem as a
+**Mixed-Integer Quadratic Program** using CVXPY, providing an exact (optimal within
+the convex relaxation) benchmark. MINCO polynomial coefficients are directly
+optimized subject to hard corridor and dynamics constraints.
+
+### 3 · Multi-UAV Swarm Planner
 
 The full pipeline for each planning cycle:
 
@@ -145,7 +150,7 @@ Iterative conflict resolution:
     resolve →  inject temporal delay to loser; replan with STO
 ```
 
-### 3 · Conflict Detection
+### 4 · Conflict Detection
 
 Two complementary checks on every ordered pair of UAVs:
 - **Proximity check**: linear interpolation onto a common time grid; contiguous windows
@@ -157,50 +162,27 @@ Two complementary checks on every ordered pair of UAVs:
 
 ## Quick Start
 
-### Requirements
-
-```bash
-python >= 3.8
-torch, numpy, scipy, cvxpy, plotly, pyyaml, jupyter
-```
-
-### Setup
-
 ```bash
 git clone git@github.com:okanarif/CopySemesterThesis.git
 cd CopySemesterThesis/uavsafeplanning
-python -m venv venv
-source venv/bin/activate
+python -m venv venv && source venv/bin/activate
 pip install torch numpy scipy cvxpy plotly pyyaml jupyter
-```
 
-### Run
+# Full swarm demo
+jupyter notebook uavsafeplanning/SWARM/SwarmPlanning.ipynb
 
-Open the demo notebooks:
-
-```bash
-jupyter notebook uavsafeplanning/SWARM/SwarmPlanning.ipynb   # full swarm demo
-jupyter notebook uavsafeplanning/STO/STO.ipynb                # single-UAV STO
-```
-
-Or generate a new simulation HTML:
-
-```bash
-cd uavsafeplanning/SWARM
-python visualizer_simulation.py
+# STO vs. MIQP comparison
+jupyter notebook uavsafeplanning/STO_MIQP_Comparison/STO_VS_MIQP_Comparison.ipynb
 ```
 
 ---
 
 ## Configuration
 
-All planner and environment parameters are exposed as YAML files in
-`uavsafeplanning/SWARM/configs/`:
-
 | File | Controls |
 |---|---|
-| `environment.yaml` | World bounds, obstacles (cylinders / walls), fleet (start, goal, v\_max, a\_max) |
-| `planner.yaml` | A\* connectivity & clearance, safe corridor seed box, STO weights & iterations, conflict detection margins, replanning budget |
+| `SWARM/configs/environment.yaml` | World bounds, obstacles (cylinders / walls), fleet (start, goal, v\_max, a\_max) |
+| `SWARM/configs/planner.yaml` | A\* connectivity & clearance, safe corridor seed box, STO weights & iterations, conflict detection margins, replanning budget |
 
 ---
 
@@ -221,5 +203,5 @@ I would like to sincerely thank:
 
 ## License
 
-This repository is made available for academic and research purposes.
+This repository is made available for academic and research purposes.  
 © 2026 Okan Arif · Technical University of Munich
