@@ -1,13 +1,9 @@
-# UAV Safe Planning — Semester Thesis
+# Safe Corridor-Based Trajectory Optimization and Conflict Resolution for Multi-UAV Systems in Narrow Passages — Semester Thesis
 
 <div align="center">
 
 **Technical University of Munich (TUM)**  
-Autonomous Aerial Systems Lab · Chair of Information-oriented Control (ITR)
-
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-gradient--based-EE4C2C?logo=pytorch)](https://pytorch.org/)
-[![Plotly](https://img.shields.io/badge/Plotly-interactive--3D-3F4F75?logo=plotly)](https://plotly.com/)
+Autonomous Aerial Systems Lab
 
 </div>
 
@@ -35,21 +31,7 @@ Autonomous Aerial Systems Lab · Chair of Information-oriented Control (ITR)
 
 ---
 
-## UAV Swarm Trajectory Generation Without Collision Optimization
-
-<div align="center">
-<img src="docs/simulation.gif" width="800" alt="Swarm trajectories — no collision optimization">
-</div>
-
-## After Collision Resolve
-
-<div align="center">
-<img src="docs/updated_simulation.gif" width="800" alt="Swarm trajectories — after conflict resolution">
-</div>
-
----
-
-## Results — STO vs. MIQP Comparison
+## STO vs. MIQP Comparison
 
 <div align="center">
 <img src="uavsafeplanning/figures/STO_MIQP_Comparison_3d_perpendicular.png" width="70%" alt="3D trajectory — orthogonal (XY) view">
@@ -57,7 +39,20 @@ Autonomous Aerial Systems Lab · Chair of Information-oriented Control (ITR)
 
 <div align="center">
 <img src="uavsafeplanning/figures/STO_MIQP_Comparison_Kinematics.png" width="48%" alt="Velocity profile comparison">
-<img src="uavsafeplanning/figures/STO_MIQP_Comparison_Kinematics_2.png" width="48%" alt="Acceleration profile comparison">
+</div>
+
+---
+
+## UAV Swarm Trajectory Generation Without Collision Conflict Resolver
+
+<div align="center">
+<img src="docs/simulation.gif" width="800" alt="Swarm trajectories — no collision optimization">
+</div>
+
+## UAV Swarm Trajectory Generation After Conflict Resolve
+
+<div align="center">
+<img src="docs/updated_simulation.gif" width="800" alt="Swarm trajectories — after conflict resolution">
 </div>
 
 ---
@@ -193,7 +188,7 @@ Chair of Information-oriented Control (ITR), Technical University of Munich (TUM
 
 I would like to sincerely thank:
 
-- **[Prof. Dr. Markus Ryll](https://www.ce.cit.tum.de/itr/people/ryll/)** — for supervising this thesis and for his
+- **[Prof. Dr. Markus Ryll](https://www.asg.ed.tum.de/aas/startseite/)** — for supervising this thesis and for his
   invaluable scientific guidance throughout the project.
 - **Lukas Pries** (PhD Candidate, Autonomous Aerial Systems Lab, TUM) — for his
   day-to-day mentorship, technical advice, thoughtful discussions, and continuous
