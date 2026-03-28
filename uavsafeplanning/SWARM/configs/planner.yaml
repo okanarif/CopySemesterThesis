@@ -58,7 +58,7 @@ safe_corridor:
 #                 Smaller = finer temporal resolution, higher cost.
 # ─────────────────────────────────────────────────────────────────────────────
 conflict_detection:
-  safety_margin: 9.0    # m  — extra buffer on top of r_i + r_j
+  safety_margin: 9.8    # m  — extra buffer on top of r_i + r_j
   dt_sample:     0.05   # s  — time-grid step (50 ms)
 
 sto:

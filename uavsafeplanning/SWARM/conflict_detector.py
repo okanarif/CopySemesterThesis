@@ -589,9 +589,9 @@ def plot_conflict_report(
     - Blue line         : Euclidean separation  ||pos_a(t) - pos_b(t)||
     - Red dashed line   : safety threshold  (r_i + r_j + margin)
     - Red shading       : trajectory-proximity violation windows
-    - Pink shading      : corridor spatio-temporal overlap windows
     - Red triangle (v)  : moment of closest approach per violation
     - Dotted verticals  : each UAV's landing (end of trajectory) time
+    (Corridor overlap bands are not drawn.)
 
     Parameters
     ----------
@@ -659,20 +659,7 @@ def _draw_pair(
 ) -> None:
     """Render one subplot for the pair (id_a, id_b)."""
 
-    # ── corridor temporal-overlap bands (drawn first, behind everything) ──
-    first_zone = True
-    for z in zones:
-        if not z.time_overlap:
-            continue
-        ta0, ta1 = z.t_window_a
-        tb0, tb1 = z.t_window_b
-        ax.axvspan(
-            max(ta0, tb0), min(ta1, tb1),
-            alpha=0.10, color="red",
-            label=f"corridor overlap P{z.poly_idx_a}/P{z.poly_idx_b}"
-                  if first_zone else "",
-        )
-        first_zone = False
+    # Corridor overlap bands (red shaded areas) are not drawn.
 
     # ── distance curve ────────────────────────────────────────────────────
     ax.plot(t_grid, dist, lw=1.8, color="steelblue",
